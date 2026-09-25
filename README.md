@@ -1,37 +1,25 @@
-# Luxury Opportunity Bot
+# Backend Postgres + dashboard + pipeline Telegram
 
-Bot Python per raccogliere opportunità di prodotti di lusso, calcolare margini/ROI, salvarle in SQLite, inviare alert Telegram e visualizzarle in una dashboard web.
-
-## Installazione
+## Avvio locale
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
 cp .env.example .env
+# avvia PostgreSQL: docker compose up -d db
+pip install -e ".[dev]"
+python -m luxury_opportunity_bot web       # API/dashboard su :8000
+python -m luxury_opportunity_bot scheduler # scraping immediato + ogni X minuti
 ```
 
-## Comandi
+Imposta `DATABASE_URL=postgresql+psycopg://luxury:luxury@localhost:5432/luxury`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SCRAPE_URLS` e `SCRAPE_INTERVAL_MINUTES`. Il worker salva le opportunità nuove e invia una sola notifica Telegram per ciascuna opportunità idonea.
 
-```bash
-python -m luxury_opportunity_bot demo
-python -m luxury_opportunity_bot run examples/opportunities.json --notify telegram
-python -m luxury_opportunity_bot web       # dashboard: http://127.0.0.1:8000
-python -m luxury_opportunity_bot scheduler
-pytest
-```
+## API
 
-## Telegram
+- `GET /health`
+- `GET /api/opportunities?brand=Rolex&source=...&min_profit=100&min_roi=20&limit=50&offset=0`
+- `POST /api/pipeline/run` per una scansione manuale
 
-Crea un bot con BotFather, inserisci `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` nel file `.env`, poi usa `--notify telegram`. Non committare mai il file `.env`.
+La dashboard è una UI responsive con tabella, filtri brand/fonte/profitto/ROI e link al marketplace. `docker compose up --build` avvia database, backend e worker.
 
-## Scraping marketplace
+## Configurazione sicurezza
 
-Imposta `SCRAPE_URLS` con URL pubblici separati da virgola. Lo scraper usa selettori CSS configurabili in `scraper.py` e salva i risultati in SQLite evitando duplicati per URL. Usalo solo quando consentito dai termini del marketplace e da robots.txt, rispettando rate limit e privacy: non include bypass di login, CAPTCHA o restrizioni.
-
-## Database e scheduler
-
-Il database predefinito è `luxury_opportunities.db`; può essere cambiato con `DATABASE_URL` (anche PostgreSQL tramite il relativo driver). `SCRAPE_INTERVAL_MINUTES` controlla la frequenza. Il comando `scheduler` esegue la scansione periodica; la dashboard espone anche `GET /api/opportunities`.
-
-## Configurazione
-
-Le soglie sono `MIN_PROFIT` e `MIN_ROI_PERCENT`. Per gli alert di scansione automatica sono necessari token e chat Telegram. Per sicurezza la dashboard è pensata per uso locale: aggiungere autenticazione e HTTPS prima di esporla pubblicamente.
+Non committare `.env`. In produzione usa una password Postgres forte, secret manager, autenticazione per le API, CORS ristretto e HTTPS. Lo scraper deve rispettare termini di servizio, robots.txt e rate limit del marketplace; non implementa bypass di CAPTCHA o accessi autenticati.
