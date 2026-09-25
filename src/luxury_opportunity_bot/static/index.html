@@ -1,6 +1,33 @@
-<!doctype html>
-<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luxury Opportunities</title>
-<style>:root{font-family:Inter,system-ui,sans-serif;color:#172033;background:#f4f6fb}body{margin:0}.shell{max-width:1280px;margin:auto;padding:32px}.hero{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.hero h1{margin:0;font-size:32px}.muted{color:#68738a}.panel{background:#fff;border:1px solid #e4e8f0;border-radius:16px;padding:18px;box-shadow:0 8px 30px #18294b0b}.filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:12px;margin-bottom:18px}input,button{border:1px solid #d8deea;border-radius:10px;padding:11px;font:inherit}button{background:#172033;color:white;cursor:pointer}button:hover{background:#34415b}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:14px 10px;text-align:left;border-bottom:1px solid #edf0f5;white-space:nowrap}th{color:#68738a;font-size:12px;text-transform:uppercase}.profit{color:#07875f;font-weight:700}.roi{color:#6b4ce6;font-weight:700}a{color:#365dcc;text-decoration:none}@media(max-width:800px){.shell{padding:16px}.hero{display:block}.filters{grid-template-columns:1fr 1fr}.filters input:first-child{grid-column:1/-1}}</style></head>
-<body><main class="shell"><section class="hero"><div><h1>Luxury Opportunities</h1><p class="muted">Monitoraggio offerte e margini in tempo reale</p></div><button onclick="loadData()">Aggiorna</button></section><section class="panel"><div class="filters"><input id="brand" placeholder="Filtra brand"><input id="source" placeholder="Fonte"><input id="profit" type="number" placeholder="Profitto min"><input id="roi" type="number" placeholder="ROI min %"><button onclick="loadData()">Filtra</button></div><div class="table-wrap"><table><thead><tr><th>Brand</th><th>Prodotto</th><th>Acquisto</th><th>Profitto</th><th>ROI</th><th>Fonte</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="7">Caricamento…</td></tr></tbody></table></div></section></main><script>
-async function loadData(){const p=new URLSearchParams({limit:500});for(const [id,key] of [['brand','brand'],['source','source'],['profit','min_profit'],['roi','min_roi']]){const v=document.getElementById(id).value;if(v)p.set(key,v)}const r=await fetch('/api/opportunities?'+p);const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${esc(x.brand)}</td><td>${esc(x.title)}</td><td>${x.purchase_price.toFixed(2)} ${x.currency}</td><td class="profit">${x.profit.toFixed(2)} ${x.currency}</td><td class="roi">${x.roi.toFixed(2)}%</td><td>${esc(x.source)}</td><td><a href="${esc(x.url)}" target="_blank" rel="noopener">Apri ↗</a></td></tr>`).join('')||'<tr><td colspan="7">Nessun risultato</td></tr>'}function esc(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}loadData();
-</script></body></html>
+from __future__ import annotations
+
+import os
+
+from apscheduler.schedulers.blocking import BlockingScheduler
+
+from .notify import TelegramNotifier, notify
+from .scraper import MarketplaceScraper
+from .storage import claim_unnotified, make_session_factory, save_opportunities
+
+
+def run_pipeline(factory) -> int:
+    urls = [url.strip() for url in os.getenv("SCRAPE_URLS", "").split(",") if url.strip()]
+    found = []
+    for url in urls:
+        found.extend(MarketplaceScraper().fetch(url, source=url))
+    saved = save_opportunities(factory, found)
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat = os.getenv("TELEGRAM_CHAT_ID", "")
+    if token and chat:
+        selected = claim_unnotified(factory, float(os.getenv("MIN_PROFIT", "100")), float(os.getenv("MIN_ROI_PERCENT", "20")))
+        if selected:
+            notify(selected, TelegramNotifier(token, chat, int(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))))
+    return saved
+
+
+def run_scheduler(factory):
+    scheduler = BlockingScheduler(timezone="UTC")
+    minutes = max(1, int(os.getenv("SCRAPE_INTERVAL_MINUTES", "60")))
+    scheduler.add_job(lambda: run_pipeline(factory), "interval", minutes=minutes, id="marketplace-scan", max_instances=1, coalesce=True)
+    print(f"Pipeline attiva: ogni {minutes} minuti")
+    run_pipeline(factory)
+    scheduler.start()

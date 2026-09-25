@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "luxury-opportunity-bot"
-version = "0.3.0"
-description = "Backend, dashboard e pipeline Telegram per opportunità luxury"
+version = "0.4.0"
+description = "Enterprise backend, dashboard JWT e pipeline Telegram per opportunità luxury"
 requires-python = ">=3.11"
 dependencies = [
   "python-dotenv>=1.0",
@@ -16,6 +16,8 @@ dependencies = [
   "apscheduler>=3.10",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
+  "PyJWT>=2.9",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

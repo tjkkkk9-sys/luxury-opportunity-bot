@@ -1,25 +1,28 @@
-# Backend Postgres + dashboard + pipeline Telegram
+# Enterprise: PostgreSQL + JWT + admin + filtri avanzati
 
-## Avvio locale
+## Avvio
 
 ```bash
 cp .env.example .env
-# avvia PostgreSQL: docker compose up -d db
-pip install -e ".[dev]"
-python -m luxury_opportunity_bot web       # API/dashboard su :8000
-python -m luxury_opportunity_bot scheduler # scraping immediato + ogni X minuti
+# cambia i secret e le password prima del primo avvio
+# allinea anche DATABASE_URL alla stessa password usata nel docker-compose.yml
+docker compose up --build
 ```
 
-Imposta `DATABASE_URL=postgresql+psycopg://luxury:luxury@localhost:5432/luxury`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SCRAPE_URLS` e `SCRAPE_INTERVAL_MINUTES`. Il worker salva le opportunità nuove e invia una sola notifica Telegram per ciascuna opportunità idonea.
+- Dashboard: `http://localhost:8000`
+- OpenAPI: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
 
-## API
+Il primo avvio crea l'utente admin definito da `ADMIN_USERNAME` e `ADMIN_PASSWORD`. Il login usa JWT Bearer; l'endpoint token è disponibile tramite `POST /api/auth/token` e le API protette richiedono un token valido.
 
-- `GET /health`
-- `GET /api/opportunities?brand=Rolex&source=...&min_profit=100&min_roi=20&limit=50&offset=0`
-- `POST /api/pipeline/run` per una scansione manuale
+## Funzioni enterprise
 
-La dashboard è una UI responsive con tabella, filtri brand/fonte/profitto/ROI e link al marketplace. `docker compose up --build` avvia database, backend e worker.
+- PostgreSQL con indici su brand, source, URL e data.
+- API protetta: `/api/opportunities`, `/api/opportunities/export`, `/api/auth/me` richiedono JWT.
+- Ruoli `admin` e `viewer`; solo admin può creare utenti e avviare la pipeline manualmente.
+- Dashboard responsive con login, filtri brand/fonte/profitto/ROI, paginazione ed export CSV.
+- Worker separato: scraping immediato all'avvio, poi alert Telegram ogni `SCRAPE_INTERVAL_MINUTES`; una opportunità viene notificata una sola volta tramite `notified_at`.
 
-## Configurazione sicurezza
+## Sicurezza prima della produzione
 
-Non committare `.env`. In produzione usa una password Postgres forte, secret manager, autenticazione per le API, CORS ristretto e HTTPS. Lo scraper deve rispettare termini di servizio, robots.txt e rate limit del marketplace; non implementa bypass di CAPTCHA o accessi autenticati.
+Usa secret manager, password casuali, HTTPS, `CORS_ORIGINS` ristretto e reverse proxy. Per deployment con più repliche aggiungere migrazioni Alembic e un lock distribuito per lo scheduler. Non committare `.env`; lo scraping deve rispettare termini, robots.txt e rate limit del marketplace.
