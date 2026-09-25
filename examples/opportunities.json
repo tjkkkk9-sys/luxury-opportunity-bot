@@ -1,0 +1,24 @@
+[
+  {
+    "title": "Borsa Demo",
+    "brand": "Brand Demo",
+    "url": "https://example.com/borsa",
+    "purchase_price": 1000,
+    "estimated_sale_price": 1600,
+    "shipping_cost": 25,
+    "platform_fee_percent": 12,
+    "tax_percent": 0,
+    "source": "demo"
+  },
+  {
+    "title": "Orologio Demo",
+    "brand": "Brand Demo",
+    "url": "https://example.com/orologio",
+    "purchase_price": 2500,
+    "estimated_sale_price": 2900,
+    "shipping_cost": 20,
+    "platform_fee_percent": 10,
+    "tax_percent": 0,
+    "source": "demo"
+  }
+]

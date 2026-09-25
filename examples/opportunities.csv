@@ -1,0 +1,3 @@
+title,brand,url,purchase_price,estimated_sale_price,shipping_cost,platform_fee_percent,tax_percent,source
+Borsa Demo,Brand Demo,https://example.com/borsa,1000,1600,25,12,0,demo
+Orologio Demo,Brand Demo,https://example.com/orologio,2500,2900,20,10,0,demo
