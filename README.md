@@ -1,71 +1,37 @@
 # Luxury Opportunity Bot
 
-Bot modulare in Python per raccogliere opportunità di prodotti di lusso, calcolare costi e margini e inviare segnalazioni.
-
-## Funzionalità
-
-- Importazione di opportunità da JSON o CSV.
-- Calcolo del costo totale, profitto netto e ROI.
-- Filtri per margine minimo, ROI minimo e brand consentiti.
-- Notifiche su console e, opzionalmente, webhook Discord/Slack compatibili.
-- Configurazione tramite variabili d'ambiente o file `.env`.
-- Modalità `demo` per verificare il progetto senza credenziali esterne.
-
-## Requisiti
-
-- Python 3.11+
-- `pip` oppure `uv`
+Bot Python per raccogliere opportunità di prodotti di lusso, calcolare margini/ROI, salvarle in SQLite, inviare alert Telegram e visualizzarle in una dashboard web.
 
 ## Installazione
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-## Avvio rapido
+## Comandi
 
 ```bash
 python -m luxury_opportunity_bot demo
-python -m luxury_opportunity_bot run examples/opportunities.json
-python -m luxury_opportunity_bot run examples/opportunities.csv --notify console
+python -m luxury_opportunity_bot run examples/opportunities.json --notify telegram
+python -m luxury_opportunity_bot web       # dashboard: http://127.0.0.1:8000
+python -m luxury_opportunity_bot scheduler
+pytest
 ```
 
-Il comando `run` restituisce un codice diverso da zero se il file di input non è valido o non contiene opportunità idonee.
+## Telegram
 
-## Formato dati
+Crea un bot con BotFather, inserisci `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` nel file `.env`, poi usa `--notify telegram`. Non committare mai il file `.env`.
 
-Campi obbligatori: `title`, `brand`, `url`, `purchase_price`, `estimated_sale_price`.
-Campi opzionali: `shipping_cost`, `platform_fee_percent`, `tax_percent`, `source`, `currency`.
+## Scraping marketplace
 
-```json
-[
-  {
-    "title": "Borsa esempio",
-    "brand": "Brand Demo",
-    "url": "https://example.com/item/1",
-    "purchase_price": 1000,
-    "estimated_sale_price": 1600,
-    "shipping_cost": 25,
-    "platform_fee_percent": 12,
-    "tax_percent": 0,
-    "source": "demo"
-  }
-]
-```
+Imposta `SCRAPE_URLS` con URL pubblici separati da virgola. Lo scraper usa selettori CSS configurabili in `scraper.py` e salva i risultati in SQLite evitando duplicati per URL. Usalo solo quando consentito dai termini del marketplace e da robots.txt, rispettando rate limit e privacy: non include bypass di login, CAPTCHA o restrizioni.
+
+## Database e scheduler
+
+Il database predefinito è `luxury_opportunities.db`; può essere cambiato con `DATABASE_URL` (anche PostgreSQL tramite il relativo driver). `SCRAPE_INTERVAL_MINUTES` controlla la frequenza. Il comando `scheduler` esegue la scansione periodica; la dashboard espone anche `GET /api/opportunities`.
 
 ## Configurazione
 
-Vedi `.env.example`. Le soglie predefinite sono `MIN_PROFIT=100` e `MIN_ROI_PERCENT=20`.
-`NOTIFICATION_MODE` può essere `console`, `webhook` o `both`. Per `webhook` impostare `WEBHOOK_URL`.
-
-## Sviluppo
-
-```bash
-pytest
-ruff check .
-```
-
-Il progetto separa dominio, importazione, notifiche e CLI per rendere semplice aggiungere in seguito connettori per marketplace o Telegram.
+Le soglie sono `MIN_PROFIT` e `MIN_ROI_PERCENT`. Per gli alert di scansione automatica sono necessari token e chat Telegram. Per sicurezza la dashboard è pensata per uso locale: aggiungere autenticazione e HTTPS prima di esporla pubblicamente.
