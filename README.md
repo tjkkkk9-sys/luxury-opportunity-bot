@@ -4,25 +4,48 @@
 
 ```bash
 cp .env.example .env
-# cambia i secret e le password prima del primo avvio
-# allinea anche DATABASE_URL alla stessa password usata nel docker-compose.yml
-docker compose up --build
+# cambia JWT_SECRET, ADMIN_PASSWORD e password Postgres
+# allinea DATABASE_URL alla password configurata in docker-compose.yml
+make up
+make ps
 ```
 
-- Dashboard: `http://localhost:8000`
-- OpenAPI: `http://localhost:8000/docs`
-- Health: `http://localhost:8000/health`
+- Dashboard: http://localhost:8000
+- OpenAPI: http://localhost:8000/docs
+- Health: http://localhost:8000/health
 
-Il primo avvio crea l'utente admin definito da `ADMIN_USERNAME` e `ADMIN_PASSWORD`. Il login usa JWT Bearer; l'endpoint token è disponibile tramite `POST /api/auth/token` e le API protette richiedono un token valido.
+Il primo avvio crea l'utente admin definito da `ADMIN_USERNAME` e `ADMIN_PASSWORD`.
 
-## Funzioni enterprise
+## Verifica PostgreSQL
 
-- PostgreSQL con indici su brand, source, URL e data.
-- API protetta: `/api/opportunities`, `/api/opportunities/export`, `/api/auth/me` richiedono JWT.
-- Ruoli `admin` e `viewer`; solo admin può creare utenti e avviare la pipeline manualmente.
-- Dashboard responsive con login, filtri brand/fonte/profitto/ROI, paginazione ed export CSV.
-- Worker separato: scraping immediato all'avvio, poi alert Telegram ogni `SCRAPE_INTERVAL_MINUTES`; una opportunità viene notificata una sola volta tramite `notified_at`.
+```bash
+make ps
+make db-shell
+# dentro psql:
+\\dt
+SELECT * FROM opportunities LIMIT 10;
+```
 
-## Sicurezza prima della produzione
+Oppure, senza entrare nella shell:
 
-Usa secret manager, password casuali, HTTPS, `CORS_ORIGINS` ristretto e reverse proxy. Per deployment con più repliche aggiungere migrazioni Alembic e un lock distribuito per lo scheduler. Non committare `.env`; lo scraping deve rispettare termini, robots.txt e rate limit del marketplace.
+```bash
+docker compose exec db psql -U luxury -d luxury -c '\\dt'
+docker compose exec db psql -U luxury -d luxury -c 'SELECT * FROM opportunities LIMIT 10;'
+```
+
+## Smoke test
+
+```bash
+ADMIN_PASSWORD='la-password-del-tuo-.env' make smoke
+```
+
+Il test verifica health, login JWT, `/api/auth/me`, lista opportunità ed export CSV. Telegram viene verificato dalla pipeline: configura token/chat e usa il pulsante admin oppure `make logs` per controllare il worker.
+
+## Comandi Make
+
+- `make up`, `make down`, `make ps`, `make logs`
+- `make db-shell`, `make test`, `make lint`, `make smoke`
+
+## Produzione
+
+Usa password casuali, secret manager, HTTPS/reverse proxy, CORS ristretto e backup PostgreSQL. Prima di esporre il servizio aggiungi rate limiting e audit log; non committare `.env`. Lo scraping deve rispettare termini di servizio, robots.txt e rate limit.

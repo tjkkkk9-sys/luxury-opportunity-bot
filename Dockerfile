@@ -1,32 +1,12 @@
-version: "3.9"
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: luxury
-      POSTGRES_USER: luxury
-      POSTGRES_PASSWORD: change-me
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U luxury -d luxury"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    ports: ["5432:5432"]
-    volumes: ["postgres_data:/var/lib/postgresql/data"]
-  api:
-    build: .
-    command: uvicorn luxury_opportunity_bot.web:app --host 0.0.0.0 --port 8000
-    env_file: .env
-    ports: ["8000:8000"]
-    depends_on:
-      db:
-        condition: service_healthy
-  worker:
-    build: .
-    command: python -m luxury_opportunity_bot scheduler
-    env_file: .env
-    depends_on:
-      db:
-        condition: service_healthy
-volumes:
-  postgres_data:
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY examples ./examples
+RUN pip install --no-cache-dir .
+
+EXPOSE 8000
+CMD ["uvicorn", "luxury_opportunity_bot.web:app", "--host", "0.0.0.0", "--port", "8000"]

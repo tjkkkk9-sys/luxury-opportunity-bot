@@ -1,33 +1,31 @@
-from __future__ import annotations
-
-import os
-
-from apscheduler.schedulers.blocking import BlockingScheduler
-
-from .notify import TelegramNotifier, notify
-from .scraper import MarketplaceScraper
-from .storage import claim_unnotified, make_session_factory, save_opportunities
-
-
-def run_pipeline(factory) -> int:
-    urls = [url.strip() for url in os.getenv("SCRAPE_URLS", "").split(",") if url.strip()]
-    found = []
-    for url in urls:
-        found.extend(MarketplaceScraper().fetch(url, source=url))
-    saved = save_opportunities(factory, found)
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat = os.getenv("TELEGRAM_CHAT_ID", "")
-    if token and chat:
-        selected = claim_unnotified(factory, float(os.getenv("MIN_PROFIT", "100")), float(os.getenv("MIN_ROI_PERCENT", "20")))
-        if selected:
-            notify(selected, TelegramNotifier(token, chat, int(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))))
-    return saved
-
-
-def run_scheduler(factory):
-    scheduler = BlockingScheduler(timezone="UTC")
-    minutes = max(1, int(os.getenv("SCRAPE_INTERVAL_MINUTES", "60")))
-    scheduler.add_job(lambda: run_pipeline(factory), "interval", minutes=minutes, id="marketplace-scan", max_instances=1, coalesce=True)
-    print(f"Pipeline attiva: ogni {minutes} minuti")
-    run_pipeline(factory)
-    scheduler.start()
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Luxury Enterprise</title>
+  <style>
+    :root{font-family:Inter,system-ui,sans-serif;color:#172033;background:#f4f6fb}body{margin:0}
+    .shell{max-width:1280px;margin:auto;padding:32px}.panel{background:#fff;border:1px solid #e4e8f0;border-radius:16px;padding:18px;box-shadow:0 8px 30px #18294b0b;margin:16px 0}
+    .filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:10px}input,button{padding:11px;border:1px solid #d8deea;border-radius:10px;font:inherit}button{background:#172033;color:#fff;cursor:pointer}button:hover{background:#2d3a5e}
+    table{width:100%;border-collapse:collapse}th,td{padding:12px 8px;border-bottom:1px solid #edf0f5;text-align:left;white-space:nowrap}.table{overflow:auto}.profit{color:#07875f;font-weight:700}.roi{color:#6b4ce6;font-weight:700}.muted{color:#68738a}.login{max-width:420px;margin:10vh auto}.hidden{display:none}.error{color:#b42318}
+    @media(max-width:800px){.shell{padding:16px}.filters{grid-template-columns:1fr 1fr}.filters input:first-child{grid-column:1/-1}}
+  </style>
+</head>
+<body><main class="shell">
+<section id="login" class="panel login"><h1>Luxury Enterprise</h1><p class="muted">Accesso amministratore</p><input id="username" placeholder="Username"><br><br><input id="password" type="password" placeholder="Password"><br><br><button onclick="login()">Accedi</button><p id="error" class="error"></p></section>
+<section id="app" class="hidden"><header><h1>Luxury Opportunities</h1><p class="muted">Dashboard enterprise · <button onclick="logout()">Esci</button></p></header>
+<section class="panel"><div class="filters"><input id="brand" placeholder="Brand"><input id="source" placeholder="Fonte"><input id="profit" type="number" min="0" placeholder="Profitto minimo"><input id="roi" type="number" min="0" placeholder="ROI minimo %"><button onclick="loadData(0)">Filtra</button></div><p><button onclick="downloadCsv()">Esporta CSV</button> <button onclick="runPipeline()">Esegui pipeline</button> <span id="status" class="muted"></span></p>
+<div class="table"><table><thead><tr><th>Brand</th><th>Prodotto</th><th>Acquisto</th><th>Profitto</th><th>ROI</th><th>Fonte</th><th>Link</th></tr></thead><tbody id="rows"></tbody></table></div><p><button onclick="page(-1)">←</button> <span id="page"></span> <button onclick="page(1)">→</button></p></section></section></main>
+<script>
+let token=localStorage.getItem('token'),offset=0;const limit=25;
+function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function filters(){const p=new URLSearchParams({limit,offset});[['brand','brand'],['source','source'],['profit','min_profit'],['roi','min_roi']].forEach(([id,key])=>{const v=document.getElementById(id).value;if(v)p.set(key,v)});return p}
+async function login(){const body=new URLSearchParams({username:document.getElementById('username').value,password:document.getElementById('password').value});const r=await fetch('/api/auth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});if(!r.ok){document.getElementById('error').textContent='Credenziali non valide';return}token=(await r.json()).access_token;localStorage.token=token;showApp()}
+function showApp(){loginPanel.classList.add('hidden');app.classList.remove('hidden');loadData(0)}
+function logout(){localStorage.removeItem('token');location.reload()}
+async function loadData(next=offset){offset=next;const r=await fetch('/api/opportunities?'+filters(),{headers:{Authorization:'Bearer '+token}});if(r.status===401)return logout();const d=await r.json();rows.innerHTML=d.items.map(x=>`<tr><td>${esc(x.brand)}</td><td>${esc(x.title)}</td><td>${x.purchase_price.toFixed(2)} ${esc(x.currency)}</td><td class=profit>${x.profit.toFixed(2)} ${esc(x.currency)}</td><td class=roi>${x.roi.toFixed(2)}%</td><td>${esc(x.source)}</td><td><a href="${esc(x.url)}" target="_blank" rel="noopener">Apri ↗</a></td></tr>`).join('')||'<tr><td colspan="7">Nessun risultato</td></tr>';pageLabel.textContent=`Pagina ${Math.floor(offset/limit)+1}`;status.textContent=`${d.total} risultati totali`}
+function page(direction){loadData(Math.max(0,offset+direction*limit))}
+async function downloadCsv(){const r=await fetch('/api/opportunities/export?'+new URLSearchParams([...filters()].filter(([k])=>!['limit','offset'].includes(k))),{headers:{Authorization:'Bearer '+token}});if(r.status===401)return logout();const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='opportunities.csv';a.click();URL.revokeObjectURL(a.href)}
+async function runPipeline(){const r=await fetch('/api/pipeline/run',{method:'POST',headers:{Authorization:'Bearer '+token}});status.textContent=r.ok?'Pipeline completata':'Accesso admin richiesto';if(r.ok)loadData(0)}
+const loginPanel=document.getElementById('login'),app=document.getElementById('app'),rows=document.getElementById('rows'),pageLabel=document.getElementById('page'),status=document.getElementById('status');if(token)showApp();
+</script></body></html>

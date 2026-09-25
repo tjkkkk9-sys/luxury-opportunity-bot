@@ -1,188 +1,37 @@
-<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Luxury Enterprise</title>
-  <style>
-    :root { font-family: Inter, system-ui, sans-serif; color: #172033; background: #f4f6fb; }
-    body { margin: 0; }
-    .shell { max-width: 1280px; margin: auto; padding: 32px; }
-    .panel { background: #fff; border: 1px solid #e4e8f0; border-radius: 16px; padding: 18px; box-shadow: 0 8px 30px rgba(24, 41, 75, 0.06); margin: 16px 0; }
-    .filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 10px; }
-    input, button { padding: 11px; border: 1px solid #d8deea; border-radius: 10px; font: inherit; }
-    button { background: #172033; color: #fff; cursor: pointer; }
-    button:hover { background: #2d3a5e; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 12px 8px; border-bottom: 1px solid #edf0f5; text-align: left; white-space: nowrap; }
-    .table { overflow: auto; }
-    .profit { color: #07875f; font-weight: 700; }
-    .roi { color: #6b4ce6; font-weight: 700; }
-    .muted { color: #68738a; }
-    .login { max-width: 420px; margin: 10vh auto; }
-    .hidden { display: none; }
-    @media (max-width: 800px) {
-      .shell { padding: 16px; }
-      .filters { grid-template-columns: 1fr 1fr; }
-      .filters input:first-child { grid-column: 1 / -1; }
-    }
-  </style>
-</head>
-<body>
-  <main class="shell">
-    <section id="login" class="panel login">
-      <h1>Luxury Enterprise</h1>
-      <p class="muted">Accesso amministratore</p>
-      <input id="username" placeholder="Username"><br><br>
-      <input id="password" type="password" placeholder="Password"><br><br>
-      <button onclick="login()">Accedi</button>
-      <p id="error"></p>
-    </section>
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: luxury
+      POSTGRES_USER: luxury
+      POSTGRES_PASSWORD: change-me
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luxury -d luxury"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-    <section id="app" class="hidden">
-      <header>
-        <h1>Luxury Opportunities</h1>
-        <p class="muted">Dashboard enterprise · <button onclick="logout()">Esci</button></p>
-      </header>
+  api:
+    build: .
+    command: uvicorn luxury_opportunity_bot.web:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
 
-      <section class="panel">
-        <div class="filters">
-          <input id="brand" placeholder="Brand">
-          <input id="source" placeholder="Fonte">
-          <input id="profit" type="number" placeholder="Profitto minimo">
-          <input id="roi" type="number" placeholder="ROI minimo %">
-          <button onclick="loadData(0)">Filtra</button>
-        </div>
-        <p>
-          <button onclick="downloadCsv()">Esporta CSV</button>
-          <button onclick="runPipeline()">Esegui pipeline</button>
-          <span id="status" class="muted"></span>
-        </p>
-        <div class="table">
-          <table>
-            <thead>
-              <tr>
-                <th>Brand</th>
-                <th>Prodotto</th>
-                <th>Acquisto</th>
-                <th>Profitto</th>
-                <th>ROI</th>
-                <th>Fonte</th>
-                <th>Link</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-        <p>
-          <button onclick="page(-1)">←</button>
-          <span id="page"></span>
-          <button onclick="page(1)">→</button>
-        </p>
-      </section>
-    </section>
-  </main>
+  worker:
+    build: .
+    command: python -m luxury_opportunity_bot scheduler
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
 
-  <script>
-    let token = localStorage.getItem('token');
-    let offset = 0;
-    const limit = 25;
-
-    function esc(value) {
-      return String(value).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
-    }
-
-    async function login() {
-      const username = document.getElementById('username').value;
-      const password = document.getElementById('password').value;
-      const body = new URLSearchParams({ username, password });
-      const response = await fetch('/api/auth/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-      });
-      if (!response.ok) {
-        document.getElementById('error').textContent = 'Credenziali non valide';
-        return;
-      }
-      const data = await response.json();
-      token = data.access_token;
-      localStorage.setItem('token', token);
-      showApp();
-    }
-
-    function showApp() {
-      document.getElementById('login').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      loadData(0);
-    }
-
-    function logout() {
-      localStorage.removeItem('token');
-      location.reload();
-    }
-
-    async function loadData(nextOffset = offset) {
-      offset = nextOffset;
-      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-      const filters = [
-        ['brand', 'brand'],
-        ['source', 'source'],
-        ['profit', 'min_profit'],
-        ['roi', 'min_roi'],
-      ];
-      for (const [id, key] of filters) {
-        const value = document.getElementById(id).value;
-        if (value) params.set(key, value);
-      }
-      const response = await fetch('/api/opportunities?' + params, {
-        headers: { Authorization: 'Bearer ' + token },
-      });
-      if (response.status === 401) return logout();
-      const data = await response.json();
-      const rows = data.items.map((x) => `
-        <tr>
-          <td>${esc(x.brand)}</td>
-          <td>${esc(x.title)}</td>
-          <td>${x.purchase_price.toFixed(2)} ${esc(x.currency)}</td>
-          <td class="profit">${x.profit.toFixed(2)} ${esc(x.currency)}</td>
-          <td class="roi">${x.roi.toFixed(2)}%</td>
-          <td>${esc(x.source)}</td>
-          <td><a href="${esc(x.url)}" target="_blank" rel="noopener">Apri ↗</a></td>
-        </tr>
-      `).join('') || '<tr><td colspan="7">Nessun risultato</td></tr>';
-      document.getElementById('rows').innerHTML = rows;
-      document.getElementById('page').textContent = `Pagina ${Math.floor(offset / limit) + 1}`;
-      document.getElementById('status').textContent = `${data.total} risultati totali`;
-    }
-
-    function page(direction) {
-      loadData(Math.max(0, offset + direction * limit));
-    }
-
-    function downloadCsv() {
-      const params = new URLSearchParams();
-      const profit = document.getElementById('profit').value;
-      const roi = document.getElementById('roi').value;
-      if (profit) params.set('min_profit', profit);
-      if (roi) params.set('min_roi', roi);
-      window.location.href = '/api/opportunities/export?' + params.toString();
-    }
-
-    async function runPipeline() {
-      const response = await fetch('/api/pipeline/run', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token },
-      });
-      document.getElementById('status').textContent = response.ok ? 'Pipeline completata' : 'Accesso admin richiesto';
-      if (response.ok) loadData(0);
-    }
-
-    if (token) {
-      showApp();
-    }
-  </script>
-</body>
-</html>
+volumes:
+  postgres_data:
