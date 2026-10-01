@@ -1,6 +1,12 @@
 SHELL := /bin/sh
 
-.PHONY: up down logs ps db-shell api-shell test lint smoke
+.DEFAULT_GOAL := check
+
+.PHONY: install up down logs ps db-shell api-shell test lint smoke check distcheck
+
+install:
+	python -m pip install --upgrade pip
+	python -m pip install -e ".[dev]"
 
 up:
 	docker compose up --build -d
@@ -28,3 +34,8 @@ lint:
 
 smoke:
 	python scripts/smoke_test.py
+
+check: lint test
+
+distcheck:
+	python -m compileall src
