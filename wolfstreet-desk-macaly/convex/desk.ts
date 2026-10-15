@@ -444,3 +444,9 @@ export const telegramUpdate = internalAction({
     }
   },
 })
+
+/** Messaggio al titolare su Telegram (rapporti del controllo giornaliero). Solo da CLI/amministratore. */
+export const notify = internalAction({
+  args: { text: v.string() },
+  handler: async (ctx, { text }) => { await telegram(ctx, text.slice(0, 3900)); return { ok: true } },
+})
