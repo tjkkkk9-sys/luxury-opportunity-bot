@@ -265,7 +265,7 @@ pre.key{font:11.5px/1.45 var(--mono);background:var(--bg);border:1px solid var(-
       <div class="ph"><h2>Collega il repository</h2></div>
       <form id="setForm">
         <div class="field"><label for="repo">Repository GitHub (utente/nome)</label>
-          <input type="text" id="repo" placeholder="tuo-utente/wolfstreet-desk" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+          <input type="text" id="repo" placeholder="tjkkkk9-sys/macaly-wolf-street-desk-l3mj65" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
         <div class="field"><label for="token">Token GitHub (fine-grained, solo questo repository)</label>
           <input type="password" id="token" placeholder="github_pat_…" autocomplete="off"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -332,7 +332,8 @@ $("#tablist").innerHTML = TABS.map(([id,l]) =>
 TABS.forEach(([id]) => document.getElementById("tab-"+id).onclick = () => setTab(id));
 
 // ---------- dati
-const repo = () => store.get("repo"), token = () => store.get("token");
+const DEFAULT_REPO = "tjkkkk9-sys/macaly-wolf-street-desk-l3mj65";
+const repo = () => store.get("repo") || DEFAULT_REPO, token = () => store.get("token");
 async function gh(path, opts = {}){
   const r = await fetch("https://api.github.com/repos/" + repo() + path, {...opts, headers:{
     "Accept":"application/vnd.github+json","Authorization":"Bearer "+token(),"X-GitHub-Api-Version":"2022-11-28",...(opts.headers||{})}});
