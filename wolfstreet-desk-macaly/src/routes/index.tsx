@@ -108,12 +108,12 @@ function NotOwner() {
 }
 
 // ------------------------------------------------------------------ desk
-const TABS = [["plus500", "Plus500"], ["ufficio", "Revolut X"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
+const TABS = [["ufficio", "Revolut X"], ["plus500", "Plus500"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
 type Tab = (typeof TABS)[number][0]
 
 function Desk() {
   const data = useQuery(api.store.view, {})
-  const [tab, setTab] = useState<Tab>("plus500")
+  const [tab, setTab] = useState<Tab>("ufficio")
   useEffect(() => { const h = location.hash.slice(1); if (TABS.some(([t]) => t === h)) setTab(h as Tab) }, [])
   const go = (t: Tab) => { setTab(t); history.replaceState(null, "", "#" + t) }
   if (data === undefined) return <Shell><p className="note">Caricamento…</p></Shell>
@@ -147,7 +147,7 @@ function Header({ D, control, keysReady, p500 }: { D: any; control: any; keysRea
         <div><small>Desk Plus500 · segnali CFD</small><h1>Wolf Street <span>Capital</span></h1></div>
         <div className="status"><span className="pill paper"><span className="dot" />Esecuzione manuale</span></div>
       </div>
-      <div className="banners"><div className="banner">Plus500 non ha API: il desk analizza e ti avvisa, l'ordine lo apri tu dall'app Plus500 con Stop Loss e Take Profit. I CFD con leva possono far perdere più in fretta di quanto pensi: rispetta sempre lo stop.</div></div>
+      <div className="banners"><div className="banner">Analisi automatica Plus500 in pausa: nessun avviso Telegram. Puoi comunque premere "Analizza adesso". Plus500 non ha API: il desk analizza e ti avvisa, l'ordine lo apri tu dall'app Plus500 con Stop Loss e Take Profit. I CFD con leva possono far perdere più in fretta di quanto pensi: rispetta sempre lo stop.</div></div>
     </header>
   )
   const mode = String(D.mode ?? control.mode ?? "shadow").toLowerCase()
