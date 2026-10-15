@@ -1,0 +1,72 @@
+name: Ufficio Wolf Street
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # ogni 30 minuti (minuti sfalsati: meno ritardi di GitHub)
+  workflow_dispatch:
+    inputs:
+      check:
+        description: "Solo verifica chiavi e dati (nessun ordine, non arma il LIVE)"
+        type: boolean
+        default: false
+      selftest:
+        description: "Verifica e, se tutto è verde e hai chiesto LIVE, arma il LIVE"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# Mai due turni insieme: un turno a metà con un ordine in volo non deve sovrapporsi al successivo.
+concurrency:
+  group: wolfstreet-office
+  cancel-in-progress: false
+
+jobs:
+  turno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dipendenze
+        run: pip install -r requirements.txt
+
+      # Sui turni automatici i test si saltano per restare nei 2.000 minuti gratuiti al mese;
+      # girano a ogni avvio manuale (verifica, comandi dalla dashboard).
+      - name: Test di sicurezza (se falliscono, nessun turno)
+        if: github.event_name != 'schedule'
+        run: python -m pytest -q
+
+      - name: Turno dell'ufficio
+        env:
+          REVX_API_KEY: ${{ secrets.REVX_API_KEY }}
+          REVX_PRIVATE_KEY: ${{ secrets.REVX_PRIVATE_KEY }}
+          LIVE_TRADING: ${{ secrets.LIVE_TRADING }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ inputs.selftest }}" = "true" ]; then python -m bot.office --selftest
+          elif [ "${{ inputs.check }}" = "true" ]; then python -m bot.office --check
+          else python -m bot.office; fi
+
+      - name: Salva memoria e dashboard
+        if: always()   # anche se il turno fallisce: un ordine in sospeso non deve andare perso
+        run: |
+          git config user.name "wolfstreet-bot"
+          git config user.email "wolfstreet-bot@users.noreply.github.com"
+          git add -A data control.json docs/data
+          git diff --cached --quiet && exit 0
+          git commit -m "turno $(date -u +%Y-%m-%dT%H:%MZ)" -q
+          # In caso di conflitto su control.json vince il comando che hai dato dal telefono (-X ours = remoto).
+          for i in 1 2 3 4; do
+            git pull --rebase -X ours -q && git push -q && exit 0
+            sleep $((i * 3))
+          done
+          exit 1

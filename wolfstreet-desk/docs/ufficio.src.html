@@ -1,0 +1,627 @@
+<title>Wolf Street Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sala operativa. Schermo esterno Fold = una colonna + barra schede in basso;
+   schermo interno aperto (>=700px) = due colonne: ufficio a sinistra, mercato/posizioni a destra. */
+:root{
+  --bg:#f3f1ec; --panel:#fbfaf7; --ink:#1b1c1e; --muted:#61646b; --faint:#9a9ca1;
+  --line:#dedad1; --gold:#9a7428; --gold-soft:#efe5cf; --up:#1d7a4f; --up-soft:#dcefe4;
+  --down:#b23a32; --down-soft:#f6dedb; --warn:#a8670f; --warn-soft:#f5e6cc;
+  --display:"Bodoni Moda","Didot","Times New Roman",serif;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111214; --panel:#191a1d; --ink:#ece9e2; --muted:#a4a6ab; --faint:#6e7076;
+  --line:#2b2c30; --gold:#d2ad62; --gold-soft:#2c2618; --up:#4cc38a; --up-soft:#15291f;
+  --down:#ef6f63; --down-soft:#331b19; --warn:#e3a443; --warn-soft:#2f2412; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111214; --panel:#191a1d; --ink:#ece9e2; --muted:#a4a6ab; --faint:#6e7076;
+  --line:#2b2c30; --gold:#d2ad62; --gold-soft:#2c2618; --up:#4cc38a; --up-soft:#15291f;
+  --down:#ef6f63; --down-soft:#331b19; --warn:#e3a443; --warn-soft:#2f2412; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{color:var(--ink);font:15px/1.5 var(--sans);margin:0;padding-inline:16px;padding-block:0 96px;-webkit-tap-highlight-color:transparent}
+.wrap{max-width:1180px;margin:0 auto}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+h1,h2,h3{text-wrap:balance;margin:0}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* testata */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:14px 10px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand h1{font:700 26px/1 var(--display);letter-spacing:.01em}
+.brand h1 span{color:var(--gold)}
+.brand small{display:block;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.status{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:99px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);background:var(--panel);color:var(--muted);white-space:nowrap}
+.pill.paper{color:var(--gold);border-color:var(--gold);background:var(--gold-soft)}
+.pill.shadow{color:var(--muted);border-color:var(--line);background:var(--panel)}
+.pill.demo{color:#fff;background:var(--warn);border-color:var(--warn)}
+.pill.live{color:var(--bg);background:var(--down);border-color:var(--down)}
+.pill.on{color:var(--up);background:var(--up-soft);border-color:transparent}
+.pill.off{color:var(--warn);background:var(--warn-soft);border-color:transparent}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pulse{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.pulse,.scan::after{animation:none!important}}
+.stamp{font-size:12px;color:var(--muted);margin-top:8px}
+.banner{margin-top:10px;padding:10px 12px;border-radius:var(--r);font-size:13px;background:var(--warn-soft);color:var(--warn);display:flex;gap:8px;align-items:flex-start}
+.banner.err{background:var(--down-soft);color:var(--down)}
+
+/* schede */
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;justify-content:center;background:var(--panel);border-top:1px solid var(--line);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px))}
+.tabs div{display:flex;gap:2px;width:100%;max-width:560px}
+.tab{flex:1;min-width:0;border:0;background:none;padding:8px 2px;border-radius:8px;font-size:11px;letter-spacing:.04em;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer}
+.tab svg{width:20px;height:20px}
+.tab[aria-selected="true"]{color:var(--gold);background:var(--gold-soft)}
+.view{display:none;gap:16px;padding-top:16px}
+.view.active{display:grid}
+
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.kpi{background:var(--panel);padding:12px 14px;min-width:0}
+.kpi label{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.kpi b{display:block;font:500 21px/1.25 var(--mono);font-variant-numeric:tabular-nums;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi i{font-style:normal;font-size:12px;color:var(--muted)}
+.up{color:var(--up)} .down{color:var(--down)}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+.eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.ph h2{font:500 21px/1.15 var(--display)}
+
+/* ufficio: le due scrivanie */
+.desks{display:grid;gap:12px}
+.desk{border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;grid-template-columns:52px minmax(0,1fr);gap:12px;position:relative;overflow:hidden;background:var(--bg)}
+.desk .av{width:52px;height:52px;border-radius:12px;display:grid;place-items:center;background:var(--gold-soft);color:var(--gold)}
+.desk .av svg{width:28px;height:28px}
+.desk h3{font:600 17px/1.2 var(--sans);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.desk p{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.desk .row{display:flex;justify-content:space-between;gap:10px;margin-top:10px;font-size:13px;flex-wrap:wrap}
+.desk .metric{font:500 22px var(--mono)}
+.scan::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:30%;background:var(--gold);animation:scan 2.4s ease-in-out infinite}
+@keyframes scan{0%{left:-30%}100%{left:100%}}
+.flow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);justify-content:center;padding:2px 0}
+.flow svg{width:16px;height:16px}
+
+/* segnali */
+.sig{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:12px 0;border-top:1px solid var(--line)}
+.sig:first-of-type{border-top:0;padding-top:0}
+.sig .sym{font-weight:600}
+.sig .px{font-size:13px;color:var(--muted)}
+.bar{grid-column:1/-1;height:6px;background:var(--line);border-radius:6px;overflow:hidden;position:relative}
+.bar span{display:block;height:100%;background:var(--gold);border-radius:6px}
+.bar em{position:absolute;top:-2px;width:2px;height:10px;background:var(--ink);opacity:.5}
+.why{grid-column:1/-1;font-size:12.5px;color:var(--muted);margin:0;padding-left:16px}
+.chip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.06em}
+.c-buy{background:var(--up-soft);color:var(--up)} .c-avoid{background:var(--down-soft);color:var(--down)}
+.c-wait{background:var(--line);color:var(--muted)} .c-ai{background:var(--gold-soft);color:var(--gold)}
+.meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+
+/* posizioni */
+.pos{padding:12px 0;border-top:1px solid var(--line);display:grid;gap:8px}
+.pos:first-of-type{border-top:0;padding-top:0}
+.pos .hd{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.range{position:relative;height:8px;border-radius:8px;background:linear-gradient(90deg,var(--down-soft),var(--line) 45%,var(--up-soft))}
+.range i{position:absolute;top:-3px;width:3px;height:14px;border-radius:2px;background:var(--ink)}
+.range b{position:absolute;top:-3px;width:2px;height:14px;background:var(--faint)}
+.rl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted)}
+.empty{color:var(--muted);font-size:14px;padding:6px 0}
+
+/* grafico */
+.chart{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font:11px var(--mono)}
+
+/* registro */
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.fbtn{border:1px solid var(--line);background:var(--bg);border-radius:99px;padding:5px 12px;font-size:12px;cursor:pointer;color:var(--muted)}
+.fbtn[aria-pressed="true"]{border-color:var(--gold);color:var(--gold);background:var(--gold-soft)}
+.log{list-style:none;margin:0;padding:0;display:grid;gap:0}
+.log li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;padding:9px 0;border-top:1px solid var(--line);font-size:13px}
+.log li:first-child{border-top:0}
+.log time{font:12px var(--mono);color:var(--faint);white-space:nowrap}
+.log .who{font-weight:600;font-size:11px;letter-spacing:.1em}
+.who.ANALISTA{color:var(--gold)} .who.RISK{color:var(--warn)} .who.TRADER{color:var(--up)} .who.SISTEMA{color:var(--muted)}
+.log li.error .txt{color:var(--down)} .log li.warn .txt{color:var(--warn)} .log li.trade .txt{font-weight:600}
+.txt{overflow-wrap:anywhere}
+
+table{border-collapse:collapse;width:100%;font-size:13px}
+.tw{overflow-x:auto}
+th{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td.r,th.r{text-align:right}
+
+/* comandi */
+.cmds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.btn{border:1px solid var(--line);background:var(--bg);border-radius:var(--r);padding:14px 12px;text-align:left;cursor:pointer;display:grid;gap:4px;min-height:84px}
+.btn b{font-size:15px}
+.btn span{font-size:12px;color:var(--muted)}
+.btn.gold{border-color:var(--gold)} .btn.red b{color:var(--down)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.confirm{border:1px solid var(--down);background:var(--down-soft);border-radius:var(--r);padding:14px;display:grid;gap:10px}
+.confirm p{margin:0;font-size:14px}
+.confirm .acts{display:flex;gap:8px;flex-wrap:wrap}
+.solid{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;background:var(--ink);color:var(--bg)}
+.solid.red{background:var(--down);color:#fff}
+.ghost{border:1px solid var(--line);background:none;border-radius:8px;padding:10px 16px;cursor:pointer}
+.field{display:grid;gap:5px;margin-bottom:12px}
+.field label{font-size:12px;color:var(--muted);font-weight:500}
+input[type=text],input[type=password]{width:100%;height:44px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:0 12px;font:14px var(--mono)}
+.note{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-size:13px;z-index:9;max-width:calc(100% - 32px)}
+pre.key{font:11.5px/1.45 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all;margin:6px 0}
+.rules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;font-size:13px}
+.rules div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--bg)}
+.rules b{display:block;font:500 15px var(--mono)}
+.rules span{color:var(--muted);font-size:11.5px}
+
+/* schermo interno aperto */
+@media (min-width:700px){
+  body{padding-bottom:40px}
+  .kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .tabs{position:static;border:1px solid var(--line);border-radius:var(--r);margin-top:12px;padding:4px}
+  .tab{flex-direction:row;justify-content:center;font-size:13px;padding:9px 6px}
+  .tab svg{width:17px;height:17px}
+  .view.active.split{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}
+  .span2{grid-column:1/-1}
+  .cmds{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .rules{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .toast{bottom:24px}
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div>
+        <small id="deskName">Desk Revolut X</small>
+        <h1>Wolf Street <span>Capital</span></h1>
+      </div>
+      <div class="status" id="statusPills"></div>
+    </div>
+    <div class="stamp" id="stamp">Caricamento…</div>
+    <div id="banners"></div>
+  </header>
+
+  <nav class="tabs" aria-label="Sezioni"><div role="tablist" id="tablist"></div></nav>
+
+  <!-- UFFICIO -->
+  <section class="view active split" id="v-ufficio" role="tabpanel">
+    <div class="kpis span2" id="kpis"></div>
+      <article class="panel">
+        <div class="ph"><h2>La squadra</h2><span class="eyebrow" id="turnLabel">Turno</span></div>
+        <div class="desks" id="desks"></div>
+      </article>
+      <article class="panel">
+        <div class="ph"><h2>Patrimonio del desk</h2><span class="eyebrow" id="eqLabel"></span></div>
+        <div id="equityChart"></div>
+      </article>
+  </section>
+
+  <!-- MERCATO -->
+  <section class="view split" id="v-mercato" role="tabpanel">
+    <article class="panel">
+      <div class="ph"><h2>Lavagna dell'Analista</h2><span class="eyebrow" id="tfLabel">candele 4h</span></div>
+      <div id="signals"></div>
+    </article>
+    <article class="panel">
+      <div class="ph"><h2>Regole di ingaggio</h2><span class="eyebrow">config.json</span></div>
+      <div class="rules" id="rules"></div>
+      <p class="note">L'Analista compra solo correzioni dentro un trend rialzista (EMA50 sopra EMA200) quando il momentum riparte. Il Trader dimensiona ogni ordine sul rischio, non sulla speranza.</p>
+    </article>
+  </section>
+
+  <!-- POSIZIONI -->
+  <section class="view split" id="v-posizioni" role="tabpanel">
+    <article class="panel">
+      <div class="ph"><h2>Posizioni aperte</h2><span class="eyebrow" id="posCount"></span></div>
+      <div id="positions"></div>
+    </article>
+    <article class="panel">
+      <div class="ph"><h2>Operazioni chiuse</h2><span class="eyebrow" id="closedCount"></span></div>
+      <div class="tw"><table id="closed"></table></div>
+    </article>
+    <article class="panel span2" id="shadowPanel" hidden>
+      <div class="ph"><h2>Diario shadow</h2><span class="eyebrow">cosa avrebbe comprato · nessun ordine</span></div>
+      <div class="tw"><table id="shadowTable"></table></div>
+    </article>
+  </section>
+
+  <!-- REGISTRO -->
+  <section class="view" id="v-registro" role="tabpanel">
+    <article class="panel">
+      <div class="ph"><h2>Registro attività</h2>
+        <div class="filters" id="logFilters"></div></div>
+      <ol class="log" id="log"></ol>
+    </article>
+  </section>
+
+  <!-- COMANDI -->
+  <section class="view split" id="v-comandi" role="tabpanel">
+    <article class="panel span2">
+      <div class="ph"><h2>Sala comandi</h2><span class="eyebrow" id="cmdState">non collegata</span></div>
+      <div class="cmds" id="cmds"></div>
+      <div id="confirmBox" style="margin-top:12px"></div>
+      <p class="note">I comandi scrivono <span class="num">control.json</span> nel tuo repository e avviano subito un turno. <b>LIVE</b> parte solo con quattro chiavi insieme: modalità LIVE, kill switch spento, verifica verde ("Verifica e arma LIVE") e secret GitHub <span class="num">LIVE_TRADING = SI</span>. Se ne manca una il desk lavora in SHADOW: calcola e registra, ma non invia ordini.</p>
+      <div id="selftestBox"></div>
+    </article>
+    <article class="panel">
+      <div class="ph"><h2>Collega il repository</h2></div>
+      <form id="setForm">
+        <div class="field"><label for="repo">Repository GitHub (utente/nome)</label>
+          <input type="text" id="repo" placeholder="tuo-utente/wolfstreet-desk" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label for="token">Token GitHub (fine-grained, solo questo repository)</label>
+          <input type="password" id="token" placeholder="github_pat_…" autocomplete="off"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="solid" type="submit">Salva e collega</button>
+          <button class="ghost" type="button" id="forget">Dimentica token</button>
+        </div>
+        <p class="note">Il token resta solo in questo browser del telefono. Permessi necessari: Contents lettura/scrittura e Actions lettura/scrittura.</p>
+      </form>
+    </article>
+    <article class="panel">
+      <div class="ph"><h2>Chiavi Revolut X</h2><span class="eyebrow">Ed25519</span></div>
+      <p class="note" style="margin-top:0">Genera qui la coppia di chiavi, senza PC. La chiave pubblica va su Revolut X (Impostazioni → API), la privata solo nei Secrets di GitHub. Nulla esce da questo telefono.</p>
+      <button class="solid" type="button" id="genKeys" style="margin-top:10px">Genera nuova coppia</button>
+      <div id="keysOut"></div>
+    </article>
+  </section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script id="demo-data" type="application/json">/*__DEMO__*/</script>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k){ try { return localStorage.getItem("wsd."+k) || ""; } catch { return ""; } },
+  set(k,v){ try { v ? localStorage.setItem("wsd."+k, v) : localStorage.removeItem("wsd."+k); } catch {} }
+};
+const eur = (v, sign) => v == null || isNaN(v) ? "—" :
+  (sign && v > 0 ? "+" : "") + new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(v);
+const pct = (v, sign=true) => v == null || isNaN(v) ? "—" : (sign && v > 0 ? "+" : "") + v.toFixed(2).replace(".", ",") + "%";
+const px = v => v == null ? "—" : Number(v).toLocaleString("it-IT",{maximumSignificantDigits:6});
+const when = t => new Date(t*1000).toLocaleString("it-IT",{timeZone:"Europe/Rome",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+const ago = t => { const m = Math.round((Date.now()/1000 - t)/60); return m < 1 ? "adesso" : m < 60 ? `${m} min fa` : m < 1440 ? `${Math.round(m/60)} h fa` : `${Math.round(m/1440)} g fa`; };
+const cls = v => v > 0 ? "up" : v < 0 ? "down" : "";
+
+const ICON = {
+  ufficio:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 21V6l8-3 8 3v15M9 21v-5h6v5M8 9h2M14 9h2M8 13h2M14 13h2"/></svg>',
+  mercato:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 20h18M6 16V9M10 16V5M14 16v-6M18 16V7"/></svg>',
+  posizioni:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M8 6V4h8v2M3 12h18"/></svg>',
+  registro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6zM9 11h7M9 15h7M9 7h3"/></svg>',
+  comandi:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>',
+  analyst:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>',
+  trader:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/></svg>',
+  risk:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+  arrow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 4v16M6 14l6 6 6-6"/></svg>'
+};
+const TABS = [["ufficio","Ufficio"],["mercato","Mercato"],["posizioni","Posizioni"],["registro","Registro"],["comandi","Comandi"]];
+
+let D = null, source = "demo", logFilter = "TUTTI";
+const demo = (() => { try { return JSON.parse($("#demo-data").textContent); } catch { return null; } })();
+
+// ---------- schede
+function setTab(id){
+  TABS.forEach(([t]) => {
+    $("#v-"+t).classList.toggle("active", t === id);
+    document.getElementById("tab-"+t).setAttribute("aria-selected", t === id);
+  });
+  store.set("tab", id);
+  if (location.hash !== "#"+id) history.replaceState(null, "", "#"+id);
+}
+$("#tablist").innerHTML = TABS.map(([id,l]) =>
+  `<button class="tab" role="tab" id="tab-${id}" aria-controls="v-${id}" aria-selected="false">${ICON[id]}<span>${l}</span></button>`).join("");
+TABS.forEach(([id]) => document.getElementById("tab-"+id).onclick = () => setTab(id));
+
+// ---------- dati
+const repo = () => store.get("repo"), token = () => store.get("token");
+async function gh(path, opts = {}){
+  const r = await fetch("https://api.github.com/repos/" + repo() + path, {...opts, headers:{
+    "Accept":"application/vnd.github+json","Authorization":"Bearer "+token(),"X-GitHub-Api-Version":"2022-11-28",...(opts.headers||{})}});
+  if (!r.ok) { let m = r.status+""; try { m += " · " + (await r.json()).message; } catch {} throw new Error(m); }
+  return r.status === 204 ? null : r.json();
+}
+const b64d = s => decodeURIComponent(escape(atob(s.replace(/\n/g,""))));
+const b64e = s => btoa(unescape(encodeURIComponent(s)));
+
+async function load(){
+  let err = null;
+  if (repo() && token()) {
+    try {
+      const f = await gh("/contents/docs/data/office.json?t=" + Date.now());
+      D = JSON.parse(b64d(f.content)); source = "github"; return render();
+    } catch(e) { err = "GitHub: " + e.message; }
+  }
+  try {
+    const r = await fetch("data/office.json?t=" + Date.now(), {cache:"no-store"});
+    if (r.ok) { D = await r.json(); source = "pages"; return render(); }
+  } catch {}
+  D = demo; source = "demo"; render(err);
+}
+
+// ---------- render
+function render(err){
+  if (!D) return;
+  $("#deskName").textContent = D.desk || "Desk Revolut X";
+  const mode = (D.mode || "shadow").toLowerCase();
+  const pills = [];
+  if (source === "demo") pills.push(`<span class="pill demo">DEMO</span>`);
+  pills.push(mode === "live" ? `<span class="pill live"><span class="dot pulse"></span>Live · soldi veri</span>`
+    : mode === "paper" ? `<span class="pill paper"><span class="dot"></span>Paper · simulato</span>`
+    : mode === "shadow" ? `<span class="pill shadow"><span class="dot"></span>Shadow · nessun ordine</span>` : `<span class="pill off">Spento</span>`);
+  if (D.kill_switch) pills.push(`<span class="pill live">Kill switch</span>`);
+  else pills.push(D.paused ? `<span class="pill off"><span class="dot"></span>In pausa</span>` : `<span class="pill on"><span class="dot pulse"></span>Operativo</span>`);
+  if (D.requested_mode === "live") pills.push(D.live_armed ? `<span class="pill on">Live armato</span>` : `<span class="pill off">Live non armato</span>`);
+  if (D.ai_enabled) pills.push(`<span class="pill">IA attiva</span>`);
+  $("#statusPills").innerHTML = pills.join("");
+  const src = {demo:"DEMO: dati dimostrativi, non sono i tuoi conti", github:"Collegato al tuo repository", pages:"Dati dal sito del desk"}[source];
+  $("#stamp").innerHTML = `Ultimo turno ${D.generated_at ? `<span class="num">${when(D.generated_at)}</span> (${ago(D.generated_at)})` : "—"} · turni totali <span class="num">${D.runs ?? "—"}</span> · ${src}`;
+  const ban = [];
+  if (source === "demo") ban.push(`<div class="banner">DEMO · simulazione su candele reali Revolut X giugno–ottobre 2026, non il tuo conto. Collega il repository nella scheda Comandi per vedere i tuoi bot.</div>`);
+  if (err) ban.push(`<div class="banner err">${esc(err)}</div>`);
+  if (D.paused && D.pause_reason) ban.push(`<div class="banner">Pausa: ${esc(D.pause_reason)}</div>`);
+  if (D.requested_mode === "live" && mode !== "live") ban.push(`<div class="banner err">LIVE richiesto ma non attivo: ${esc((D.live_blocks || []).join(" · ") || "verifica non eseguita")}. Il desk lavora in SHADOW.</div>`);
+  (D.pending_orders || []).forEach(o => ban.push(`<div class="banner err">Ordine ${esc(o.side)} ${esc(o.symbol)} in attesa di conferma da Revolut X: nessun nuovo acquisto finché non è chiarito.</div>`));
+  if (D.live_book && (D.live_book.positions || []).length && mode !== "live") ban.push(`<div class="banner">Hai ${D.live_book.positions.length} posizioni LIVE aperte: stop e target restano attivi${D.kill_switch ? ", tranne con il kill switch acceso" : ""}.</div>`);
+  (D.errors || []).forEach(e => ban.push(`<div class="banner err">${esc(e)}</div>`));
+  if (D.generated_at && source !== "demo" && Date.now()/1000 - D.generated_at > 5400) ban.push(`<div class="banner">Nessun turno da oltre 90 minuti: controlla la scheda Actions su GitHub.</div>`);
+  $("#banners").innerHTML = ban.join("");
+
+  const k = D.kpi || {}, c = D.config || {};
+  $("#kpis").innerHTML = [
+    ["Patrimonio", eur(k.equity), `partenza ${eur(k.start)}`, ""],
+    ["Risultato", eur(k.pnl_total, true), pct(k.pnl_pct), cls(k.pnl_total)],
+    ["Oggi · settimana", eur(k.pnl_today, true), `settimana ${eur(k.pnl_week, true)}`, cls(k.pnl_today)],
+    ["Vincenti", k.win_rate == null ? "—" : pct(k.win_rate, false), `${k.trades ?? 0} chiuse · ${k.sample || "—"}`, ""],
+    ["Investito", eur(k.exposure), `liquidità ${eur(k.cash)}`, ""],
+    ["Calo massimo", pct(k.max_dd_pct == null ? null : -k.max_dd_pct), `limite ${c.max_drawdown_pct ?? "—"}%`, k.max_dd_pct > (c.max_drawdown_pct||15)*.6 ? "down" : ""]
+  ].map(([l,v,s,cl]) => `<div class="kpi"><label>${l}</label><b class="${cl}">${v}</b><i>${s}</i></div>`).join("");
+
+  const agents = D.agents || [];
+  $("#turnLabel").textContent = D.generated_at ? "turno " + when(D.generated_at) : "";
+  $("#desks").innerHTML = agents.length ? agents.map((a,i) => `
+    ${i ? `<div class="flow">${ICON.arrow}segnale approvato → esecuzione</div>` : ""}
+    <div class="desk ${a.status !== "IN PAUSA" ? "scan" : ""}">
+      <div class="av">${ICON[a.id] || ""}</div>
+      <div style="min-width:0">
+        <h3>${esc(a.name)} <span class="chip ${a.status === "IN PAUSA" ? "c-avoid" : a.status === "SEGNALE" || a.status === "OPERATIVO" ? "c-buy" : "c-wait"}">${esc(a.status)}</span></h3>
+        <p>${esc(a.role)}</p>
+        <div class="row"><span><span class="metric num">${a.metric}</span> <span style="color:var(--muted)">${esc(a.unit)}</span></span>
+          ${a.ai_reviews ? `<span class="chip c-ai">${a.ai_reviews} pareri IA</span>` : ""}</div>
+        <p style="margin-top:6px">${esc(a.detail)}</p>
+      </div>
+    </div>`).join("") : `<p class="empty">I bot non hanno ancora completato un turno.</p>`;
+
+  drawEquity(D.equity || [], k.start);
+  renderSignals(D.signals || [], c);
+  renderRules(c);
+  renderPositions((D.positions || []).concat(mode !== "live" && D.live_book ? (D.live_book.positions || []) : []));
+  renderClosed(D.closed || []);
+  renderShadow(D.shadow || [], mode);
+  renderLog();
+  renderCmds();
+}
+
+function drawEquity(pts, start){
+  const box = $("#equityChart");
+  if (pts.length < 2) { box.innerHTML = `<p class="empty">La curva compare dopo i primi turni.</p>`; $("#eqLabel").textContent = ""; return; }
+  const W = 640, H = 230, L = 52, R = 14, T = 14, B = 28;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]).concat(start ? [start] : []);
+  let lo = Math.min(...ys), hi = Math.max(...ys); const pad = (hi - lo) * .12 || 1; lo -= pad; hi += pad;
+  const x = t => L + (t - xs[0]) / (xs.at(-1) - xs[0] || 1) * (W - L - R);
+  const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const line = pts.map((p,i) => (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1)).join("");
+  const ticks = [0,1,2,3].map(i => lo + (hi - lo) * i / 3);
+  const days = [0, .5, 1].map(f => xs[0] + (xs.at(-1) - xs[0]) * f);
+  const last = pts.at(-1)[1], up = last >= (start ?? pts[0][1]);
+  const col = up ? "var(--up)" : "var(--down)";
+  $("#eqLabel").textContent = `${pts.length} rilevazioni`;
+  box.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento del patrimonio: ultimo valore ${eur(last)}">
+    ${ticks.map(v => `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L-8}" y="${y(v)+4}" text-anchor="end">${v.toFixed(v < 100 ? 1 : 0)}</text>`).join("")}
+    ${start ? `<line x1="${L}" x2="${W-R}" y1="${y(start)}" y2="${y(start)}" stroke="var(--gold)" stroke-dasharray="4 4"/><text x="${W-R}" y="${y(start)-6}" text-anchor="end" style="fill:var(--gold)">partenza</text>` : ""}
+    <path d="${line}L${x(xs.at(-1))} ${H-B}L${L} ${H-B}Z" fill="${col}" opacity=".10"/>
+    <path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${x(xs.at(-1))}" cy="${y(last)}" r="4" fill="${col}"/>
+    ${days.map((t,i) => `<text x="${x(t)}" y="${H-8}" text-anchor="${["start","middle","end"][i]}">${new Date(t*1000).toLocaleDateString("it-IT",{day:"2-digit",month:"short"})}</text>`).join("")}
+  </svg>`;
+}
+
+function renderSignals(sigs, c){
+  $("#tfLabel").textContent = `candele ${(c.interval_min||240)/60}h · soglia ${c.min_score ?? 80}`;
+  $("#signals").innerHTML = sigs.length ? sigs.map(s => {
+    const chip = s.action === "COMPRA" ? "c-buy" : s.action === "EVITA" ? "c-avoid" : "c-wait";
+    return `<div class="sig">
+      <div><span class="sym">${esc(s.symbol)}</span> <span class="px num">${px(s.live_price ?? s.price)} €</span>
+        ${s.change_24h_pct != null && source !== "demo" ? `<span class="num ${cls(s.change_24h_pct)}" style="font-size:12px">${pct(s.change_24h_pct)} 24h</span>` : ""}</div>
+      <div><span class="chip ${chip}">${esc(s.action)}</span> <span class="num">${s.score}</span></div>
+      <div class="bar" aria-label="punteggio ${s.score} su 100"><span style="width:${s.score}%"></span><em style="left:${c.min_score ?? 80}%"></em></div>
+      <div class="meta" style="grid-column:1/-1"><span>RSI <b class="num">${s.rsi?.toFixed(0) ?? "—"}</b></span><span>ATR <b class="num">${s.atr_pct?.toFixed(2) ?? "—"}%</b></span><span>ADX <b class="num">${s.adx?.toFixed(0) ?? "—"}</b></span>${s.spread_pct != null ? `<span>spread <b class="num">${s.spread_pct.toFixed(3)}%</b></span>` : ""}</div>
+      <ul class="why">${(s.reasons||[]).map(r => `<li>${esc(r)}</li>`).join("")}</ul>
+      ${s.ai ? `<p class="why" style="padding:0"><span class="chip c-ai">IA ${esc(s.ai.verdict)}</span> ${esc(s.ai.reason)}</p>` : ""}
+    </div>`; }).join("") : `<p class="empty">Nessuna analisi disponibile.</p>`;
+}
+
+function renderRules(c){
+  const r = [
+    [`${c.risk_per_trade_eur ?? "—"} €`, "rischio massimo per operazione"],
+    [`${c.max_position_pct ?? "—"}%`, "tetto per singola posizione"],
+    [`${c.max_open_positions ?? "—"}`, "posizioni contemporanee"],
+    [`−${c.daily_loss_limit_eur ?? "—"} € / −${c.weekly_loss_limit_eur ?? "—"} €`, "stop giornaliero / settimanale"],
+    [`${c.max_risk_pct ?? "—"}%`, "rischio massimo del patrimonio per operazione"],
+    [`${c.max_drawdown_pct ?? "—"}%`, "calo che mette in pausa"],
+    [`${c.stop_atr ?? "—"}× ATR`, "distanza dello stop"],
+    [`${c.tp_atr ?? "—"}× ATR`, "distanza del target"],
+    [`${(c.pairs||[]).length}`, (c.pairs||[]).join(" · ")]
+  ];
+  $("#rules").innerHTML = r.map(([b,s]) => `<div><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join("");
+}
+
+function renderPositions(ps){
+  $("#posCount").textContent = `${ps.length} aperte`;
+  $("#positions").innerHTML = ps.length ? ps.map(p => {
+    const span = p.tp - p.stop || 1, at = v => Math.max(0, Math.min(100, (v - p.stop) / span * 100));
+    return `<div class="pos">
+      <div class="hd"><span><b>${esc(p.symbol)}</b> <span class="chip ${p.mode === "live" ? "c-avoid" : "c-wait"}">${esc((p.mode || "").toUpperCase())}</span> <span class="num" style="color:var(--muted);font-size:13px">${px(p.qty)} @ ${px(p.entry)}</span></span>
+        <span class="num ${cls(p.pnl)}"><b>${eur(p.pnl, true)}</b> ${pct(p.pnl_pct)}</span></div>
+      <div class="range" aria-label="prezzo tra stop e target"><b style="left:${at(p.entry)}%"></b><i style="left:calc(${at(p.price)}% - 1px)"></i></div>
+      <div class="rl num"><span>stop ${px(p.stop)}</span><span>ora ${px(p.price)}</span><span>target ${px(p.tp)}</span></div>
+      <div class="meta"><span>aperta ${when(p.opened_at)}</span><span>valore ${eur(p.value)}</span><span>punteggio ${p.score}</span></div>
+    </div>`; }).join("") : `<p class="empty">Nessuna posizione aperta. Il Trader aspetta un segnale sopra soglia.</p>`;
+}
+
+function renderClosed(cs){
+  $("#closedCount").textContent = `ultime ${cs.length}`;
+  $("#closed").innerHTML = cs.length ? `<thead><tr><th>Chiusa</th><th>Coppia</th><th>Motivo</th><th class="r">Entrata</th><th class="r">Uscita</th><th class="r">Risultato</th></tr></thead><tbody>` +
+    cs.map(t => `<tr><td class="num">${when(t.closed_at)}</td><td>${esc(t.symbol)}</td><td>${esc(t.reason)}</td><td class="r num">${px(t.entry)}</td><td class="r num">${px(t.exit)}</td><td class="r num ${cls(t.pnl)}">${eur(t.pnl, true)}</td></tr>`).join("") + "</tbody>"
+    : `<tbody><tr><td class="empty">Ancora nessuna operazione chiusa.</td></tr></tbody>`;
+}
+
+function renderShadow(rows, mode){
+  $("#shadowPanel").hidden = mode !== "shadow" && !rows.length;
+  $("#shadowTable").innerHTML = rows.length ? `<thead><tr><th>Quando</th><th>Coppia</th><th class="r">Importo</th><th class="r">Prezzo</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Punti</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td class="num">${when(r.t)}</td><td>${esc(r.symbol)}</td><td class="r num">${eur(r.eur)}</td><td class="r num">${px(r.price)}</td><td class="r num">${px(r.stop)}</td><td class="r num">${px(r.tp)}</td><td class="r num">${r.score}</td></tr>`).join("") + "</tbody>"
+    : `<tbody><tr><td class="empty">In SHADOW il desk registra qui gli acquisti che avrebbe fatto, senza inviare ordini. Ancora nessuno.</td></tr></tbody>`;
+}
+
+function renderLog(){
+  const who = ["TUTTI","ANALISTA","RISK","TRADER","SISTEMA"];
+  $("#logFilters").innerHTML = who.map(w => `<button class="fbtn" type="button" aria-pressed="${w === logFilter}" data-w="${w}">${w[0] + w.slice(1).toLowerCase()}</button>`).join("");
+  document.querySelectorAll("#logFilters .fbtn").forEach(b => b.onclick = () => { logFilter = b.dataset.w; renderLog(); });
+  const rows = (D.log || []).filter(l => logFilter === "TUTTI" || l.bot === logFilter);
+  $("#log").innerHTML = rows.length ? rows.map(l => `<li class="${esc(l.level)}"><time>${when(l.t)}</time><div><span class="who ${esc(l.bot)}">${esc(l.bot)}</span> <span class="txt">${esc(l.text)}</span></div></li>`).join("")
+    : `<li><span></span><span class="empty">Nessuna voce.</span></li>`;
+}
+
+// ---------- comandi
+let pending = null;
+function renderCmds(){
+  const ok = !!(repo() && token());
+  $("#cmdState").textContent = ok ? "collegata a " + repo() : "non collegata";
+  const req = D?.requested_mode || "shadow";
+  const btns = [
+    ["run", "Esegui turno ora", "I bot lavorano subito", "gold"],
+    [D?.paused ? "resume" : "pause", D?.paused ? "Riprendi" : "Metti in pausa", D?.paused ? "Riattiva nuovi ingressi" : "Stop nuovi acquisti, le uscite continuano", ""],
+    ["shadow", "SHADOW", req === "shadow" ? "Attivo · registra senza ordini" : "Solo decisioni, nessun ordine", ""],
+    ["paper", "PAPER", req === "paper" ? "Attivo · portafoglio virtuale" : "Portafoglio virtuale su prezzi veri", ""],
+    ["live", "Passa a LIVE", req === "live" ? "Richiesto · serve la verifica" : "Ordini veri: poi va armato", "red"],
+    ["selftest", "Verifica e arma LIVE", "Controlla chiavi, saldi, dati; arma solo se tutto è verde", "gold"],
+    [D?.kill_switch ? "unkill" : "kill", D?.kill_switch ? "Spegni kill switch" : "KILL SWITCH", D?.kill_switch ? "Riattiva il desk" : "Blocca ogni ordine, anche gli stop", "red"],
+    ["panic", "Chiudi tutto", "Vende le posizioni del bot e mette in pausa", "red"],
+    ["check", "Verifica chiavi", "Solo lettura, non arma", ""]
+  ];
+  $("#cmds").innerHTML = btns.map(([id,b,s,c]) => `<button class="btn ${c}" type="button" data-cmd="${id}" ${ok ? "" : "disabled"}><b>${b}</b><span>${s}</span></button>`).join("");
+  document.querySelectorAll("#cmds .btn").forEach(b => b.onclick = () => ask(b.dataset.cmd));
+}
+const CONFIRM = {
+  live: "Chiedi la modalità LIVE. Non parte nessun ordine finché non premi anche 'Verifica e arma LIVE' e la verifica è tutta verde. Da quel momento il Trader userà soldi veri del tuo conto Revolut X, entro i limiti di config.json: le perdite sono possibili. Usa solo denaro che puoi permetterti di perdere. Confermi?",
+  selftest: "Avvio la verifica completa. Se hai chiesto LIVE e tutto è verde, il desk viene ARMATO e dal turno successivo può inviare ordini veri. Confermi?",
+  kill: "Il kill switch blocca OGNI ordine, compresi gli stop delle posizioni LIVE aperte: le gestirai tu dall'app Revolut X. Confermi?",
+  panic: "Il Trader venderà al prezzo di mercato tutte le posizioni aperte dal bot (non le tue altre crypto) e metterà l'ufficio in pausa. Confermi?"
+};
+function ask(cmd){
+  if (!CONFIRM[cmd]) return exec(cmd);
+  pending = cmd;
+  $("#confirmBox").innerHTML = `<div class="confirm" role="alertdialog"><p>${CONFIRM[cmd]}</p><div class="acts"><button class="solid red" type="button" id="yes">Sì, conferma</button><button class="ghost" type="button" id="no">Annulla</button></div></div>`;
+  $("#yes").onclick = () => { $("#confirmBox").innerHTML = ""; exec(pending); };
+  $("#no").onclick = () => { $("#confirmBox").innerHTML = ""; pending = null; };
+}
+async function setControl(patch, msg){
+  const f = await gh("/contents/control.json");
+  const cur = JSON.parse(b64d(f.content));
+  const next = {...cur, ...patch};
+  await gh("/contents/control.json", {method:"PUT", body: JSON.stringify({message: msg, sha: f.sha, content: b64e(JSON.stringify(next, null, 1) + "\n")})});
+}
+async function dispatch(inputs = {}){
+  const info = await gh("");
+  await gh("/actions/workflows/office.yml/dispatches", {method:"POST", body: JSON.stringify({ref: info.default_branch || "main",
+    inputs: {check: String(!!inputs.check), selftest: String(!!inputs.selftest)}})});
+}
+const DISARM = {live_armed:false, armed_key:null, armed_at:null};
+async function exec(cmd){
+  try {
+    toast("Invio comando…");
+    if (cmd === "run") { await dispatch(); toast("Turno avviato: risultati tra circa 1 minuto"); setTimeout(load, 70000); return; }
+    if (cmd === "check") { await dispatch({check:true}); toast("Verifica avviata: risultato qui sotto tra circa 1 minuto"); setTimeout(load, 70000); return; }
+    if (cmd === "selftest") { await dispatch({selftest:true}); toast("Verifica avviata: se è verde e hai chiesto LIVE, il desk viene armato"); setTimeout(load, 70000); return; }
+    if (cmd === "pause") await setControl({paused:true, pause_reason:"Pausa manuale dal telefono"}, "comando: pausa");
+    if (cmd === "resume") await setControl({paused:false, pause_reason:""}, "comando: riprendi");
+    if (cmd === "shadow") await setControl({mode:"shadow", ...DISARM}, "comando: modalità shadow");
+    if (cmd === "paper") await setControl({mode:"paper", ...DISARM}, "comando: modalità paper");
+    if (cmd === "live") await setControl({mode:"live", ...DISARM}, "comando: richiesta modalità live (da armare)");
+    if (cmd === "kill") await setControl({kill_switch:true, ...DISARM}, "comando: KILL SWITCH");
+    if (cmd === "unkill") await setControl({kill_switch:false}, "comando: kill switch spento");
+    if (cmd === "panic") await setControl({panic_close:true}, "comando: chiudi tutto");
+    await dispatch();
+    toast("Comando salvato, turno avviato");
+    setTimeout(load, 70000);
+  } catch(e) { toast("Comando non riuscito: " + e.message + ". Controlla token e permessi.", 6000); }
+}
+async function loadSelftest(){
+  let r = null;
+  try {
+    if (repo() && token()) { const f = await gh("/contents/docs/data/selftest.json?t=" + Date.now()); r = JSON.parse(b64d(f.content)); }
+    else { const x = await fetch("data/selftest.json?t=" + Date.now(), {cache:"no-store"}); if (x.ok) r = await x.json(); }
+  } catch {}
+  $("#selftestBox").innerHTML = !r ? "" : `<div class="panel" style="margin-top:12px;background:var(--bg)">
+    <div class="ph"><h2 style="font-size:17px">Ultima verifica · ${r.green ? '<span class="up">VERDE</span>' : '<span class="down">ROSSA</span>'}${r.armed ? ' · <span class="down">LIVE ARMATO</span>' : ""}</h2><span class="eyebrow">${when(r.t)}</span></div>
+    <ul class="why" style="padding-left:0;list-style:none">${(r.checks || []).map(c => `<li>${c.ok ? "✅" : "❌"} <b>${esc(c.name)}</b> · ${esc(c.detail)}</li>`).join("")}</ul>
+    <p class="note">${esc(r.note || "")}</p></div>`;
+}
+let tt;
+function toast(m, ms=3500){ const t = $("#toast"); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => t.hidden = true, ms); }
+
+$("#repo").value = repo(); $("#token").value = token() ? "••••••••" : "";
+$("#setForm").addEventListener("submit", e => {
+  e.preventDefault();
+  store.set("repo", $("#repo").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, ""));
+  const t = $("#token").value.trim(); if (t && !t.startsWith("••")) store.set("token", t);
+  $("#token").value = token() ? "••••••••" : "";
+  toast("Salvato. Carico i dati…"); load();
+});
+$("#forget").onclick = () => { store.set("token", ""); $("#token").value = ""; toast("Token rimosso da questo telefono"); renderCmds(); };
+
+// ---------- generatore chiavi Ed25519
+const pem = (label, bytes) => `-----BEGIN ${label}-----\n` + btoa(String.fromCharCode(...bytes)).match(/.{1,64}/g).join("\n") + `\n-----END ${label}-----`;
+const hex = h => Uint8Array.from(h.match(/../g).map(b => parseInt(b, 16)));
+async function makeKeys(){
+  try {
+    const k = await crypto.subtle.generateKey({name:"Ed25519"}, true, ["sign","verify"]);
+    return [new Uint8Array(await crypto.subtle.exportKey("pkcs8", k.privateKey)), new Uint8Array(await crypto.subtle.exportKey("spki", k.publicKey))];
+  } catch {
+    if (!window.nacl) await new Promise((ok, ko) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl-fast.min.js"; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
+    const kp = nacl.sign.keyPair();
+    const join = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+    return [join(hex("302e020100300506032b657004220420"), kp.secretKey.slice(0, 32)), join(hex("302a300506032b6570032100"), kp.publicKey)];
+  }
+}
+$("#genKeys").onclick = async () => {
+  try {
+    const [priv, pub] = await makeKeys();
+    const P = pem("PUBLIC KEY", pub), S = pem("PRIVATE KEY", priv);
+    $("#keysOut").innerHTML = `
+      <p class="note"><b>1 · Chiave pubblica</b> → Revolut X, crea API key e incollala.</p><pre class="key" id="kpub">${P}</pre>
+      <button class="ghost" type="button" data-copy="kpub">Copia pubblica</button>
+      <p class="note" style="margin-top:14px"><b>2 · Chiave privata</b> → GitHub, Settings → Secrets → Actions → <span class="num">REVX_PRIVATE_KEY</span>. Non inviarla a nessuno.</p><pre class="key" id="kpriv">${S}</pre>
+      <button class="ghost" type="button" data-copy="kpriv">Copia privata</button>
+      <p class="note">Quando hai salvato entrambe, chiudi questa pagina: la chiave privata non viene conservata.</p>`;
+    document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
+      const el = document.getElementById(b.dataset.copy);
+      try { await navigator.clipboard.writeText(el.textContent); toast("Copiata"); }
+      catch { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast("Testo selezionato: usa Copia del telefono"); }
+    });
+  } catch(e) { toast("Generazione non riuscita su questo browser: usa Chrome aggiornato", 5000); }
+};
+
+// ---------- avvio
+const startTab = (location.hash || "").slice(1);
+setTab(TABS.some(t => t[0] === startTab) ? startTab : (store.get("tab") || "ufficio"));
+load(); loadSelftest();
+setInterval(() => { if (source !== "demo") { load(); loadSelftest(); } }, 60000);
+})();
+</script>
