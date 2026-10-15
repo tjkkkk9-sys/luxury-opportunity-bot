@@ -518,12 +518,12 @@ function Plus500() {
         <div className="ph"><h2>Segnali Plus500</h2><span className="eyebrow">{V.generated_at ? `analisi ${when(V.generated_at)} (${ago(V.generated_at)})` : "nessuna analisi ancora"}</span></div>
         <div className="row">
           <button onClick={() => void analyze()} disabled={busy}>{busy ? "Analizzo…" : "Analizza adesso"}</button>
-          {!data.telegram && <span className="note">Per ricevere gli avvisi sul telefono collega Telegram in <b>Revolut X → Comandi</b> (token e chat ID).</span>}
         </div>
         {msg && <p className="note">{msg}</p>}
         {(V.errors ?? []).map((e: string) => <div key={e} className="banner err">{e}</div>)}
         {active.length ? active.map((s) => <P500Card key={s.id} s={s} min={c.min_score} />) : <p className="empty">{V.generated_at ? "Nessun ingresso valido adesso: il desk aspetta un'occasione pulita. Meglio nessuna operazione che una cattiva." : "Premi \"Analizza adesso\" per la prima analisi; poi gira da solo ogni 30 minuti."}</p>}
       </article>
+      <TelegramLink ready={data.telegram} hasToken={data.telegramToken} />
       <article className="panel">
         <div className="ph"><h2>Segnali in corso</h2><span className="eyebrow">li seguo io e ti avviso</span></div>
         {(V.ideas ?? []).length ? V.ideas.map((i: any) => (
@@ -584,5 +584,48 @@ function P500Card({ s, min }: { s: any; min: number }) {
       <ul className="why">{(s.reasons ?? []).map((r: string) => <li key={r}>{r}</li>)}</ul>
       <p className="why flat">Su Plus500: {long ? "Compra" : "Vendi"} {s.name}, imposta l'importo vicino a {fmtEur(s.plan?.exposure_eur)} di valore, Stop Loss {fmtPx(s.stop)}, Take Profit {fmtPx(s.target)}.</p>
     </div>
+  )
+}
+
+function TelegramLink({ ready, hasToken }: { ready: boolean; hasToken: boolean }) {
+  const setToken = useAction(api.desk.telegramSetToken)
+  const link = useAction(api.desk.telegramLink)
+  const test = useAction(api.desk.telegramTest)
+  const [token, setTok] = useState("")
+  const [bot, setBot] = useState("")
+  const [msg, setMsg] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [redo, setRedo] = useState(false)
+  async function go(f: () => Promise<any>, ok: (r: any) => string) {
+    setBusy(true); setMsg("")
+    try { setMsg(ok(await f())) } catch (e: any) { setMsg(String(e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) } finally { setBusy(false) }
+  }
+  if (ready && !redo) return (
+    <article className="panel span2">
+      <div className="ph"><h2>Avvisi Telegram</h2><span className="chip c-buy">collegato</span></div>
+      <div className="row">
+        <button className="ghost" disabled={busy} onClick={() => void go(() => test({}), () => "Messaggio di prova inviato: controlla Telegram.")}>Manda una prova</button>
+        <button className="link" onClick={() => setRedo(true)}>Ricollega</button>
+      </div>
+      {msg && <p className="note" role="status">{msg}</p>}
+    </article>
+  )
+  const step2 = hasToken || !!bot
+  return (
+    <article className="panel span2">
+      <div className="ph"><h2>Collega Telegram</h2><span className="eyebrow">2 minuti · così i segnali ti arrivano sul telefono</span></div>
+      <ol className="steps">
+        <li><b>Crea il tuo bot.</b> Apri <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>, premi Avvia, scrivi <code>/newbot</code>, scegli un nome (es. Wolf Street) e un nome utente che finisce con <code>bot</code>. BotFather ti risponde con un <b>token</b>: tienilo premuto e copialo.</li>
+        <li><b>Incollalo qui.</b>
+          <div className="row"><input type="password" autoComplete="off" placeholder="123456789:AA…" value={token} onChange={(e) => setTok(e.target.value)} />
+            <button disabled={busy || !token.trim()} onClick={() => void go(() => setToken({ token }), (r) => { setBot(r.bot); setTok(""); return `Token giusto: il tuo bot è @${r.bot}.` })}>Salva</button></div>
+          {hasToken && !bot && <span className="note">Token già salvato.</span>}
+        </li>
+        <li><b>Scrivi al bot.</b> {bot ? <a href={`https://t.me/${bot}`} target="_blank" rel="noreferrer">Apri @{bot}</a> : "Apri il tuo bot su Telegram"} e premi <b>AVVIA</b> (o scrivi "ciao").</li>
+        <li><b>Collega.</b> <button disabled={busy || !step2} onClick={() => void go(() => link({}), (r) => { setRedo(false); return `Collegato${r.name ? ", " + r.name : ""}! Ti ho mandato un messaggio di prova.` })}>{busy ? "Attendi…" : "Collega Telegram"}</button></li>
+      </ol>
+      {msg && <p className="note" role="status">{msg}</p>}
+      <p className="note">Il token resta cifrato sul server e non viene mai mostrato. Non mandarlo in chat a nessuno.</p>
+    </article>
   )
 }

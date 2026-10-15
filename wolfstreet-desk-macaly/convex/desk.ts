@@ -292,3 +292,48 @@ export const plus500Now = action({
   args: {},
   handler: async (ctx) => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runPlus500, {}) },
 })
+
+// ------------------------------------------------------------- Telegram: collegamento guidato
+/** Salva il token del bot (preso da @BotFather) e controlla subito che sia valido. */
+export const telegramSetToken = action({
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    await requireOwner(ctx)
+    const t = token.trim()
+    if (!/^\d{5,15}:[A-Za-z0-9_-]{30,60}$/.test(t)) throw new Error("Il token non sembra giusto: copialo intero dal messaggio di BotFather (numeri:lettere)")
+    const r = await fetch(`https://api.telegram.org/bot${t}/getMe`, { signal: AbortSignal.timeout(15_000) })
+    const j: any = await r.json().catch(() => ({}))
+    if (!j.ok) throw new Error("Telegram non riconosce questo token: ricontrollalo su BotFather")
+    await putSecret(ctx, "telegram_token", t)
+    return { ok: true, bot: j.result?.username as string }
+  },
+})
+
+/** Trova da solo il tuo chat ID dal messaggio che hai mandato al bot, lo salva e manda un messaggio di prova. */
+export const telegramLink = action({
+  args: {},
+  handler: async (ctx) => {
+    await requireOwner(ctx)
+    const t = await getSecret(ctx, "telegram_token")
+    if (!t) throw new Error("Prima salva il token del bot")
+    const r = await fetch(`https://api.telegram.org/bot${t}/getUpdates?allowed_updates=%5B%22message%22%5D`, { signal: AbortSignal.timeout(15_000) })
+    const j: any = await r.json().catch(() => ({}))
+    if (!j.ok) throw new Error(`Telegram non risponde (${j.description ?? r.status})`)
+    const chats = (j.result ?? []).map((u: any) => u.message?.chat).filter((c: any) => c && c.type === "private")
+    const chat = chats.at(-1)
+    if (!chat) throw new Error("Non vedo ancora il tuo messaggio: apri il bot su Telegram, premi AVVIA (o scrivi ciao) e poi riprova")
+    await putSecret(ctx, "telegram_chat", String(chat.id))
+    await telegram(ctx, "🐺 <b>Wolf Street Capital</b>\nTelegram collegato. Da adesso ricevi qui i segnali Plus500 e gli avvisi del desk.")
+    return { ok: true, name: chat.first_name ?? chat.username ?? "" }
+  },
+})
+
+export const telegramTest = action({
+  args: {},
+  handler: async (ctx) => {
+    await requireOwner(ctx)
+    if (!(await getSecret(ctx, "telegram_chat"))) throw new Error("Telegram non ancora collegato")
+    await telegram(ctx, "🐺 Prova avvisi Wolf Street: funziona.")
+    return { ok: true }
+  },
+})

@@ -176,8 +176,9 @@ export const p500View = query({
   args: {},
   handler: async (ctx) => {
     if (!(await ownerEmail(ctx))) return null
-    const tg = !!(await ctx.db.query("secrets").withIndex("name", (q) => q.eq("name", "telegram_token")).unique())
-    return { view: parse(await getKV(ctx, "p500_view"), null), config: parse(await getKV(ctx, "p500_config"), {}), telegram: tg }
+    const has = async (n: string) => !!(await ctx.db.query("secrets").withIndex("name", (q) => q.eq("name", n)).unique())
+    const tg = (await has("telegram_token")) && (await has("telegram_chat"))
+    return { view: parse(await getKV(ctx, "p500_view"), null), config: parse(await getKV(ctx, "p500_config"), {}), telegram: tg, telegramToken: await has("telegram_token") }
   },
 })
 export const saveP500Config = mutation({
