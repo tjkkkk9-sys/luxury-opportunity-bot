@@ -2,7 +2,7 @@
 // Motore del desk: turno automatico, verifica, salvataggio chiavi. Tutto lato server.
 import Anthropic from "@anthropic-ai/sdk"
 import { v } from "convex/values"
-import { createCipheriv, createDecipheriv, createPrivateKey, hkdfSync, randomBytes, randomUUID } from "node:crypto"
+import { createCipheriv, createDecipheriv, createPrivateKey, hkdfSync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { internal } from "./_generated/api"
 import { action, internalAction } from "./_generated/server"
 import type { ActionCtx } from "./_generated/server"
@@ -316,6 +316,7 @@ export const telegramLink = action({
     await requireOwner(ctx)
     const t = await getSecret(ctx, "telegram_token")
     if (!t) throw new Error("Prima salva il token del bot")
+    await fetch(`https://api.telegram.org/bot${t}/deleteWebhook`, { signal: AbortSignal.timeout(15_000) }).catch(() => null)
     const r = await fetch(`https://api.telegram.org/bot${t}/getUpdates?allowed_updates=%5B%22message%22%5D`, { signal: AbortSignal.timeout(15_000) })
     const j: any = await r.json().catch(() => ({}))
     if (!j.ok) throw new Error(`Telegram non risponde (${j.description ?? r.status})`)
@@ -323,7 +324,8 @@ export const telegramLink = action({
     const chat = chats.at(-1)
     if (!chat) throw new Error("Non vedo ancora il tuo messaggio: apri il bot su Telegram, premi AVVIA (o scrivi ciao) e poi riprova")
     await putSecret(ctx, "telegram_chat", String(chat.id))
-    await telegram(ctx, "🐺 <b>Wolf Street Capital</b>\nTelegram collegato. Da adesso ricevi qui i segnali Plus500 e gli avvisi del desk.")
+    await registerWebhook(ctx, t)
+    await telegram(ctx, "🐺 <b>Wolf Street Capital</b>\nTelegram collegato. Da adesso ricevi qui gli avvisi del desk. Scrivi /aiuto per i comandi.")
     return { ok: true, name: chat.first_name ?? chat.username ?? "" }
   },
 })
@@ -335,5 +337,110 @@ export const telegramTest = action({
     if (!(await getSecret(ctx, "telegram_chat"))) throw new Error("Telegram non ancora collegato")
     await telegram(ctx, "🐺 Prova avvisi Wolf Street: funziona.")
     return { ok: true }
+  },
+})
+
+// ------------------------------------------------------------- Telegram: comandi dal telefono
+async function registerWebhook(ctx: ActionCtx, token: string) {
+  const site = process.env.CONVEX_SITE_URL
+  if (!site) throw new Error("Indirizzo del server non disponibile")
+  const secret = randomBytes(24).toString("hex")
+  await putSecret(ctx, "telegram_hook", secret)
+  const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({ url: `${site}/telegram`, secret_token: secret, allowed_updates: ["message"], drop_pending_updates: true }),
+  })
+  const j: any = await r.json().catch(() => ({}))
+  if (!j.ok) throw new Error(`Telegram non accetta il collegamento dei comandi (${j.description ?? r.status})`)
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({ commands: [
+      { command: "stato", description: "Saldo, posizioni e risultato" },
+      { command: "mercato", description: "Punteggi delle crypto" },
+      { command: "turno", description: "Analizza adesso" },
+      { command: "pausa", description: "Stop nuovi acquisti" },
+      { command: "riprendi", description: "Riattiva gli acquisti" },
+      { command: "chiudi", description: "Vendi tutto e metti in pausa" },
+      { command: "aiuto", description: "Elenco comandi" },
+    ] }),
+  }).catch(() => null)
+}
+
+/** Attiva i comandi Telegram sul bot già collegato (usata dall'amministratore). */
+export const telegramEnableCommands = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const t = await getSecret(ctx, "telegram_token")
+    if (!t || !(await getSecret(ctx, "telegram_chat"))) throw new Error("Telegram non collegato")
+    await registerWebhook(ctx, t)
+    await telegram(ctx, "🐺 Comandi attivi. Scrivi /aiuto per l'elenco.")
+    return { ok: true }
+  },
+})
+
+const eur = (n: unknown) => (Number.isFinite(Number(n)) ? `${Number(n).toFixed(2).replace(".", ",")} €` : "—")
+const sgn = (n: unknown) => (Number(n) > 0 ? "+" : "") + eur(n)
+const AIUTO = `🐺 <b>Comandi Wolf Street</b>
+/stato — saldo, posizioni aperte e risultato
+/mercato — punteggi BTC, ETH, SOL, XRP
+/turno — il desk analizza adesso
+/pausa — stop ai nuovi acquisti (stop e target restano attivi)
+/riprendi — riattiva gli acquisti
+/chiudi — vende tutto e mette in pausa (chiede conferma)
+
+LIVE e kill switch solo dal sito, per sicurezza.`
+
+function statoText(o: any, c: any): string {
+  if (!o) return "Nessun turno ancora eseguito."
+  const k = o.kpi ?? {}
+  const pos = (o.positions ?? []).map((p: any) =>
+    `• <b>${esc(p.symbol)}</b> ${esc(p.qty)} @ ${esc(p.entry)} · ora ${esc(p.price ?? "—")} · ${sgn(p.pnl)}\n   stop ${Number(p.stop).toFixed(2)} · target ${Number(p.tp).toFixed(2)}`).join("\n")
+  const stato = c.kill_switch ? "KILL SWITCH" : c.paused ? `IN PAUSA${c.pause_reason ? " (" + esc(c.pause_reason) + ")" : ""}` : "operativo"
+  return `🐺 <b>Stato desk</b> · ${esc(String(o.mode).toUpperCase())} · ${stato}
+Turno delle ${new Date(o.generated_at * 1000).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" })}
+EUR liberi: ${eur(o.balances?.EUR?.available ?? k.cash)}
+Patrimonio: ${eur(k.equity)} · oggi ${sgn(k.pnl_today)} · settimana ${sgn(k.pnl_week)}
+${pos ? "<b>Posizioni</b>\n" + pos : "Nessuna posizione aperta."}`
+}
+function mercatoText(o: any): string {
+  if (!o?.signals?.length) return "Nessuna analisi disponibile."
+  return "📊 <b>Mercato</b> (soglia " + (o.config?.min_score ?? "—") + ")\n" + o.signals.map((s: any) =>
+    `• <b>${esc(s.symbol)}</b> ${esc(s.action)} ${s.score}/100 · ${esc(s.live_price ?? s.price)} €\n   ${esc((s.reasons ?? [])[0] ?? "")}`).join("\n")
+}
+
+export const telegramUpdate = internalAction({
+  args: { secret: v.string(), body: v.string() },
+  handler: async (ctx, { secret, body }) => {
+    const hook = await getSecret(ctx, "telegram_hook")
+    if (!hook || secret.length !== hook.length || !timingSafeEqual(Buffer.from(secret), Buffer.from(hook))) return
+    let msg: any
+    try { msg = JSON.parse(body)?.message } catch { return }
+    const chat = await getSecret(ctx, "telegram_chat")
+    if (!msg?.chat || !chat || String(msg.chat.id) !== chat) return // solo la chat del titolare
+    const text = String(msg.text ?? "").trim().toLowerCase().replace(/@\w+/, "")
+    const [cmd, arg] = text.split(/\s+/)
+    const read = () => ctx.runQuery(internal.store.readOffice, {})
+    try {
+      if (cmd === "/stato") { const { office, control } = await read(); await telegram(ctx, statoText(office, control)) }
+      else if (cmd === "/mercato") { const { office } = await read(); await telegram(ctx, mercatoText(office)) }
+      else if (cmd === "/turno") {
+        await telegram(ctx, "⏳ Analizzo…")
+        const r: any = await ctx.runAction(internal.desk.runTurn, {})
+        const { office, control } = await read()
+        await telegram(ctx, r?.skipped ? `Turno già in corso, riprova tra poco.` : `${mercatoText(office)}\n\n${statoText(office, control)}`)
+      } else if (cmd === "/pausa") { await ctx.runMutation(internal.store.telegramCommand, { cmd: "pause" }); await telegram(ctx, "⏸️ In pausa: niente nuovi acquisti. Stop e target delle posizioni aperte restano attivi.") }
+      else if (cmd === "/riprendi") { await ctx.runMutation(internal.store.telegramCommand, { cmd: "resume" }); await telegram(ctx, "▶️ Ripreso: il desk torna a cercare ingressi.") }
+      else if (cmd === "/chiudi" && arg === "conferma") {
+        await ctx.runMutation(internal.store.telegramCommand, { cmd: "panic" })
+        await ctx.runMutation(internal.store.telegramCommand, { cmd: "pause" })
+        await telegram(ctx, "🔴 Chiudo tutte le posizioni…")
+        await ctx.runAction(internal.desk.runTurn, {})
+        const { office, control } = await read()
+        await telegram(ctx, statoText(office, control))
+      } else if (cmd === "/chiudi") await telegram(ctx, "Vuoi vendere tutte le posizioni del desk e metterlo in pausa?\nPer confermare scrivi: <b>/chiudi conferma</b>")
+      else await telegram(ctx, AIUTO)
+    } catch (e: any) {
+      await telegram(ctx, `⚠️ Comando non riuscito: ${esc(e?.message ?? e)}`)
+    }
   },
 })

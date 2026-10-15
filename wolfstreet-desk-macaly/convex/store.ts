@@ -205,3 +205,25 @@ export const adminConfig = internalMutation({
     return { ...cur, ...p }
   },
 })
+
+// ---------------------------------------------------------- comandi da Telegram (solo la chat del titolare)
+export const readOffice = internalQuery({
+  args: {},
+  handler: async (ctx) => ({
+    office: parse(await getKV(ctx, "office"), null),
+    control: { ...DEFAULT_CONTROL, ...parse(await getKV(ctx, "control"), {}) },
+  }),
+})
+/** Solo comandi che riducono il rischio o lo riportano normale: il LIVE e il kill switch restano sul sito. */
+export const telegramCommand = internalMutation({
+  args: { cmd: v.string() },
+  handler: async (ctx, { cmd }) => {
+    const c: Record<string, any> = { ...DEFAULT_CONTROL, ...parse(await getKV(ctx, "control"), {}) }
+    if (cmd === "pause") Object.assign(c, { paused: true, pause_reason: "Pausa da Telegram" })
+    else if (cmd === "resume") Object.assign(c, { paused: false, pause_reason: "" })
+    else if (cmd === "panic") Object.assign(c, { panic_close: true })
+    else throw new Error("Comando non permesso da Telegram")
+    await putKV(ctx, "control", JSON.stringify(c))
+    return c
+  },
+})
