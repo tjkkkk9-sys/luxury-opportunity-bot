@@ -192,3 +192,16 @@ export const saveP500Config = mutation({
     await putKV(ctx, "p500_config", JSON.stringify({ ...cur, ...p }))
   },
 })
+
+/** Stessi campi di saveConfig, usabile solo dall'amministratore del deployment (CLI), non dal sito. */
+export const adminConfig = internalMutation({
+  args: { patch: v.string() },
+  handler: async (ctx, { patch }) => {
+    const allowed = ["budget_eur", "paper_start_eur", "risk_per_trade_eur", "daily_loss_limit_eur", "weekly_loss_limit_eur", "max_drawdown_pct", "min_score", "pairs"]
+    const p = parse(patch, {})
+    for (const k of Object.keys(p)) if (!allowed.includes(k)) throw new Error(`Campo non modificabile: ${k}`)
+    const cur = parse(await getKV(ctx, "config"), {})
+    await putKV(ctx, "config", JSON.stringify({ ...cur, ...p }))
+    return { ...cur, ...p }
+  },
+})
