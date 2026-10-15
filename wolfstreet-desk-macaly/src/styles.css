@@ -236,5 +236,5 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 @keyframes blink { 50% { opacity: .35; } }
 @keyframes glow { 50% { box-shadow: 0 0 1.4cqw hsl(46 95% 55% / .8); } }
 @keyframes dots { 40% { opacity: 1; } }
-@media (max-width: 520px) { .rscreen { font-size: 1.6cqw; } .rlist, .rsmall, .rsteps { font-size: 1.35cqw; } .rhead { font-size: 1.35cqw; } .rbubble { font-size: 1.8cqw; max-width: 30%; top: 41%; } .rsign { font-size: 1.6cqw; } }
+@media (max-width: 520px) { .rscreen { font-size: 1.9cqw; padding: 1.2cqw; white-space: nowrap; } .rhead { font-size: 1.7cqw; } .rbig { font-size: 3.1cqw; } .s2 .rrow { margin-left: 18%; flex-direction: column; gap: 0; } .s3 .rrow { flex-direction: column; gap: 0; } .rbubble { white-space: normal; } .rlist, .rsteps, .rspark, .rmode, .s1 .rsmall, .rpos .rsmall, .s3 > .rrow { display: none; } .rbubble { font-size: 2.3cqw; max-width: 30%; top: 43%; } .rsign { font-size: 1.8cqw; } }
 @media (prefers-reduced-motion: reduce) { .rscreen::after, .live-dot, .rmode.on, .typing i { animation: none; } .rsteps li { transition: none; } }
