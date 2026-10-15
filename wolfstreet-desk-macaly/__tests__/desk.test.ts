@@ -188,3 +188,14 @@ describe("ordini e commissioni", () => {
     expect(fillFromOrder({ ...o, total_fee: "0.09", fee_currency: "EUR" }, "sell", "BTC", 0, 0.0009)[2]).toBeCloseTo(99.91, 9)
   })
 })
+
+describe("budget LIVE", () => {
+  it("alzare o abbassare il budget sposta la liquidità senza toccare il risultato", () => {
+    const state: any = { books: { live: { ...emptyBook(40), cash: 28 } } }
+    const ctl: any = { mode: "shadow" }
+    const o = new Office(new Fake() as any, { ...CFG, budget_eur: 60 }, ctl, state, 1_800_000_000)
+    expect([o.live.start, o.live.cash]).toEqual([60, 48])
+    const o2 = new Office(new Fake() as any, { ...CFG, budget_eur: 10 }, ctl, state, 1_800_000_000)
+    expect([o2.live.start, o2.live.cash]).toEqual([12, 0]) // non scende mai sotto zero di liquidità
+  })
+})

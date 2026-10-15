@@ -189,6 +189,13 @@ export class Office {
     state.books = state.books ?? {}
     this.paper = state.books.paper = state.books.paper ?? emptyBook(this.cfg.paper_start_eur)
     this.live = state.books.live = state.books.live ?? emptyBook(this.cfg.budget_eur)
+    // Budget cambiato dal titolare: la differenza entra (o esce) come versamento, senza toccare il risultato.
+    const delta = Math.round((this.cfg.budget_eur - this.live.start) * 100) / 100
+    if (delta !== 0) {
+      const d = Math.max(delta, -this.live.cash)
+      this.live.start += d; this.live.cash += d
+      if (d) this.log("SISTEMA", `Budget LIVE aggiornato a ${this.live.start.toFixed(2)} € (${d > 0 ? "+" : ""}${d.toFixed(2)} € di liquidità)`)
+    }
     this.book = this.mode === "live" ? this.live : this.mode === "paper" ? this.paper : null
     this.journal = new Journal(state, this.persist)
   }
