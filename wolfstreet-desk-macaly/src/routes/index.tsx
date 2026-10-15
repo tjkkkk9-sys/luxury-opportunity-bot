@@ -201,6 +201,7 @@ function Ufficio({ D, keysReady, go }: { D: any; keysReady: boolean; go: (t: Tab
   const hasBook = D.kpi && Object.keys(D.kpi).length > 0
   return (
     <section className="view split">
+      <div className="span2"><Room D={D} /></div>
       {hasBook ? <div className="span2"><Kpis k={D.kpi} c={D.config} /></div>
         : <article className="panel span2"><p className="note">{D.mode === "shadow" ? "In SHADOW il desk non ha un portafoglio: registra nel Diario shadow cosa avrebbe comprato." : "I numeri compaiono dopo il primo turno."}{!keysReady && <> <button className="link" onClick={() => go("comandi")}>Inserisci le chiavi</button></>}</p></article>}
       <article className="panel">
@@ -627,5 +628,76 @@ function TelegramLink({ ready, hasToken }: { ready: boolean; hasToken: boolean }
       {msg && <p className="note" role="status">{msg}</p>}
       <p className="note">Il token resta cifrato sul server e non viene mai mostrato. Non mandarlo in chat a nessuno.</p>
     </article>
+  )
+}
+
+// ------------------------------------------------------------------ sala operativa (dati veri sugli schermi)
+const ROOM_BG = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/q29Oxqy2XP3b9boyrtn1z/desk-room-oR4ntGYi.webp"
+const ROOM_BG_SM = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/u7FdmBDowrpAajmPHN3Vv/desk-room-sm-Tk8rGbKc.webp"
+
+function useNow(ms = 1000) {
+  const [n, setN] = useState(() => Date.now())
+  useEffect(() => { const id = setInterval(() => setN(Date.now()), ms); return () => clearInterval(id) }, [ms])
+  return n
+}
+
+function Spark({ pts }: { pts: [number, number][] }) {
+  if (!pts || pts.length < 2) return <svg className="rspark" viewBox="0 0 100 30" aria-hidden="true"><line x1="0" x2="100" y1="15" y2="15" /></svg>
+  const v = pts.map((p) => p[1]), lo = Math.min(...v), hi = Math.max(...v), r = hi - lo || 1
+  const d = v.map((y, i) => `${i ? "L" : "M"}${((i / (v.length - 1)) * 100).toFixed(1)} ${(28 - ((y - lo) / r) * 26).toFixed(1)}`).join("")
+  return <svg className="rspark" viewBox="0 0 100 30" aria-hidden="true"><path d={d} className={v[v.length - 1] >= v[0] ? "u" : "d"} /></svg>
+}
+
+function Room({ D }: { D: any }) {
+  const now = useNow()
+  const sigs: any[] = D.signals ?? []
+  const btc = sigs.find((s) => s.symbol === "BTC-EUR") ?? sigs[0]
+  const pos: any[] = D.positions ?? []
+  const k = D.kpi ?? {}
+  const live = String(D.mode) === "live"
+  const stopped = D.kill_switch || D.paused
+  const next = D.generated_at ? D.generated_at + 1800 - Math.floor(now / 1000) : null
+  const mm = next != null && next > 0 ? `${Math.floor(next / 60)}:${String(next % 60).padStart(2, "0")}` : "in corso"
+  const phase = Math.floor(now / 2600) % 4
+  const steps = ["Analizza", "Pianifica", "Esegue", "Controlla"]
+  const best = sigs.slice().sort((a, b) => b.score - a.score)[0]
+  const say = D.kill_switch ? "Kill switch: tutto fermo" : D.paused ? "In pausa: niente nuovi acquisti"
+    : pos.length ? `Sorveglio ${pos.map((p) => p.symbol.split("-")[0]).join(", ")}: stop e target attivi`
+    : best ? `Studio ${best.symbol.split("-")[0]}: ${best.score}/100` : "Pronto"
+  return (
+    <figure className="room" aria-label="Sala operativa: i bot al lavoro con i dati reali del conto">
+      <picture>
+        <source media="(max-width: 700px)" srcSet={ROOM_BG_SM} />
+        <img src={ROOM_BG} alt="" className="room-bg" />
+      </picture>
+      <div className="rscreen s1">
+        <div className="rhead"><b>{btc?.symbol?.replace("-", "/") ?? "BTC/EUR"}</b><span className="live-dot" /></div>
+        <div className="rbig num">{btc ? fmtPx(btc.live_price ?? btc.price) : "—"} €</div>
+        <div className={`num rsmall ${tone(btc?.change_24h_pct)}`}>{btc?.change_24h_pct != null ? fmtPct(btc.change_24h_pct) + " 24h" : " "}</div>
+        <ul className="rlist">{sigs.map((s) => <li key={s.symbol}><span>{s.symbol.split("-")[0]}</span><span className="num">{s.score}</span><span className={s.action === "COMPRA" ? "up" : s.action === "EVITA" ? "down" : "muted"}>{s.action}</span></li>)}</ul>
+      </div>
+      <div className="rscreen s2">
+        <div className="rhead"><b>WOLF STREET</b><span className={`rmode ${live ? "on" : ""}`}>{live ? "LIVE · soldi veri" : String(D.mode ?? "—").toUpperCase()}</span></div>
+        <ol className="rsteps">{steps.map((t, i) => <li key={t} className={!stopped && i === phase ? "act" : ""}>{t}</li>)}</ol>
+        <Spark pts={D.equity ?? []} />
+        <div className="rrow num"><span>Patrimonio</span><b>{fmtEur(k.equity)}</b></div>
+        <div className="rrow num"><span>Prossimo turno</span><b>{stopped ? "—" : mm}</b></div>
+      </div>
+      <div className="rscreen s3">
+        <div className="rhead"><b>POSIZIONI</b><span className="num">{pos.length}/2</span></div>
+        {pos.length ? pos.map((p) => (
+          <div key={p.symbol} className="rpos">
+            <div className="rrow"><b>{p.symbol.split("-")[0]}</b><b className={`num ${tone(p.pnl)}`}>{fmtEur(p.pnl, true)}</b></div>
+            <div className="rrow num rsmall"><span>entrata</span><span>{fmtPx(p.entry)}</span></div>
+            <div className="rrow num rsmall"><span>ora</span><span>{fmtPx(p.price)}</span></div>
+            <div className="rrow num rsmall down"><span>stop</span><span>{fmtPx(Math.round(p.stop))}</span></div>
+            <div className="rrow num rsmall up"><span>target</span><span>{fmtPx(Math.round(p.tp))}</span></div>
+          </div>
+        )) : <p className="rsmall muted">Nessuna posizione: attendo un segnale pulito.</p>}
+        <div className="rrow num rsmall"><span>Liquidità</span><span>{fmtEur(D.balances?.EUR?.available ?? k.cash)}</span></div>
+      </div>
+      <div className="rsign"><span>WOLF STREET</span><span>CAPITAL</span></div>
+      <figcaption className={`rbubble ${stopped ? "off" : ""}`}><span className="typing" aria-hidden="true"><i /><i /><i /></span>{say}</figcaption>
+    </figure>
   )
 }
