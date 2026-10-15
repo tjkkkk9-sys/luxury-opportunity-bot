@@ -10,7 +10,7 @@ import { esc, Office, selftest as runSelftest } from "./lib/office"
 import type { AiReview } from "./lib/office"
 import { keyFingerprint, normalizePem, RevolutX } from "./lib/revolutx"
 import { analyzeCfd, byId, clampP500, followIdea, parseYahoo } from "./lib/plus500"
-import type { Idea } from "./lib/plus500"
+import type { CfdSignal, Idea } from "./lib/plus500"
 import type { Candle } from "./lib/strategy"
 
 // ------------------------------------------------------------- segreti cifrati
@@ -243,7 +243,7 @@ export const runPlus500 = internalAction({
     }
     const fx = data.eurusd?.at(-1)?.c
     if (fx && now - (data.eurusd.at(-1)!.t) < 4 * 86400) eurUsd = fx
-    const signals = []
+    const signals: CfdSignal[] = []
     for (const id of cfg.enabled) {
       const inst = byId(id)!
       const sig = analyzeCfd(inst, data[id] ?? [], now, eurUsd, cfg)

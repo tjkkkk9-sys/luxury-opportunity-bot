@@ -2,11 +2,15 @@
   "default": {
     "title": "Wolf Street Desk",
     "description": "Desk Wolf Street Capital: segnali Plus500 con stop e target, avvisi Telegram, e desk automatico Revolut X.",
-    "openGraph": {}
+    "openGraph": {
+      "images": ""
+    }
   },
   "/": {
     "title": "Wolf Street Desk",
     "description": "Desk Wolf Street Capital: segnali Plus500 con stop e target, avvisi Telegram, e desk automatico Revolut X.",
-    "openGraph": {}
+    "openGraph": {
+      "images": ""
+    }
   }
 }
