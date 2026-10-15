@@ -739,8 +739,11 @@ def main(argv=None) -> int:
                          "pause_reason": "Chiavi Revolut X mancanti o non valide", "errors": [str(e)],
                          "agents": [], "kpi": {}, "signals": [], "positions": [], "closed": [], "equity": [],
                          "log": [{"t": now, "bot": "SISTEMA", "text": f"Configurazione incompleta: {e}", "level": "error"}]})
-        print("ERRORE:", e)
-        return 1
+        print("DESK SPENTO (nessun ordine):", e)
+        # Chiavi non ancora inserite: stato normale prima della configurazione, non un guasto.
+        # Il turno finisce "verde" per non mandare un'email di errore ogni 30 minuti;
+        # la verifica manuale invece fallisce, così il problema si vede.
+        return 1 if ("--check" in argv or "--selftest" in argv) else 0
 
     if "--check" in argv or "--selftest" in argv:
         report = selftest(client, cfg, control, state, now, arm="--selftest" in argv, live_secret=live_secret)
