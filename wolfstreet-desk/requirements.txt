@@ -1,0 +1,4 @@
+requests>=2.31
+cryptography>=42
+anthropic>=0.70
+pytest>=8

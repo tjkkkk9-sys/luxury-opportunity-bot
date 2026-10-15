@@ -1,0 +1,10 @@
+{
+ "mode": "shadow",
+ "paused": false,
+ "pause_reason": "",
+ "panic_close": false,
+ "kill_switch": false,
+ "live_armed": false,
+ "armed_key": null,
+ "armed_at": null
+}
