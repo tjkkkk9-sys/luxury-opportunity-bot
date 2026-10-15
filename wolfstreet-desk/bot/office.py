@@ -26,9 +26,17 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ai, safety, strategy as st
+from . import ai, safety
+from . import strategy as st
 from .notify import esc, telegram
-from .revolutx import FINAL_STATES, RevolutX, RevolutXError, floor_step, key_fingerprint, order_status, to_dash
+from .revolutx import (
+    FINAL_STATES,
+    RevolutX,
+    RevolutXError,
+    floor_step,
+    order_status,
+    to_dash,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 TZ = ZoneInfo("Europe/Rome")
@@ -232,7 +240,7 @@ class Office:
 
     def _periods(self, book: dict):
         dt = datetime.fromtimestamp(self.now, TZ)
-        d, w = dt.strftime("%Y-%m-%d"), "%d-W%02d" % dt.isocalendar()[:2]
+        d, w = dt.strftime("%Y-%m-%d"), f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}"
         book.setdefault("daily", {"date": "", "realized": 0.0})
         book.setdefault("weekly", {"week": "", "realized": 0.0})
         if book["daily"]["date"] != d:

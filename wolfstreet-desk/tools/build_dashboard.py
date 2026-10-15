@@ -13,8 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from bot import office  # noqa: E402
-from test_desk import CFG, FakeRevolutX  # noqa: E402
+from test_desk import CFG, FakeRevolutX
+
+from bot import office
 
 
 def make_demo() -> dict:

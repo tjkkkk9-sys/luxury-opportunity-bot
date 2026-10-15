@@ -52,7 +52,7 @@ def load_private_key(raw: str) -> Ed25519PrivateKey:
             raise ValueError("Il seed base64 deve essere di 32 byte.")
         key = Ed25519PrivateKey.from_private_bytes(seed)
     if not isinstance(key, Ed25519PrivateKey):
-        raise ValueError("La chiave privata non è Ed25519.")
+        raise TypeError("La chiave privata non è Ed25519.")
     return key
 
 

@@ -1,5 +1,6 @@
 """Test del desk. Esegui:  python -m pytest -q"""
 import base64
+import itertools
 import json
 import shutil
 import subprocess
@@ -12,11 +13,20 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from cryptography.hazmat.primitives import serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from bot import ai, backtest, indicators as ind, office, safety, strategy as st  # noqa: E402
-from bot.revolutx import RevolutX, RevolutXError, floor_step, key_fingerprint, load_private_key, sign  # noqa: E402
+from bot import ai, backtest, office, safety
+from bot import indicators as ind
+from bot import strategy as st
+from bot.revolutx import (
+    RevolutX,
+    RevolutXError,
+    floor_step,
+    key_fingerprint,
+    load_private_key,
+    sign,
+)
 
 FIX = ROOT / "tests" / "fixtures"
 CFG = json.loads((ROOT / "config.json").read_text())
@@ -105,7 +115,7 @@ def test_candles_are_paged_to_get_enough_history():
     rows = c.candles("BTC-EUR", 240, count=300, until_ms=1_800_000_000_000)
     assert len(seen) == 3 and len(rows) == 300
     starts = [r["start"] for r in rows]
-    assert starts == sorted(set(starts)) and all(b - a == 240 * 60_000 for a, b in zip(starts, starts[1:]))
+    assert starts == sorted(set(starts)) and all(b - a == 240 * 60_000 for a, b in itertools.pairwise(starts))
 
 
 def test_wait_final_tolerates_404_and_finds_by_client_order_id():
@@ -272,13 +282,13 @@ def test_shadow_records_decisions_without_orders_or_portfolio():
 
 
 def test_live_not_armed_never_sends_orders():
-    fake, state, snap, _ = replay({"mode": "live"}, live_secret=True)
+    fake, _, snap, _ = replay({"mode": "live"}, live_secret=True)
     assert not fake.orders and snap["mode"] == "shadow" and snap["live_blocks"]
 
 
 def test_armed_live_trades_and_sells_only_its_own_quantity():
     ctl = {"mode": "live", "live_armed": True, "armed_key": "fp-test"}
-    fake, state, snap, _ = replay(ctl, live_secret=True)
+    fake, state, _, _ = replay(ctl, live_secret=True)
     buys = [o for o in fake.orders if o[1] == "buy"]
     max_eq = max(e for _, e in state["books"]["live"]["equity"])
     assert buys and all(float(o[3]["quote_size"]) <= max_eq * 0.30 + 0.01 for o in buys)
@@ -355,7 +365,7 @@ def test_stale_or_missing_data_blocks_buys():
 
 
 def test_ai_veto_blocks_buy():
-    fake, state, _, _ = replay({"mode": "paper"})
+    _, state, _, _ = replay({"mode": "paper"})
     assert state["books"]["paper"]["closed"]
     fake2 = FakeRevolutX()
     state2 = {}
@@ -368,7 +378,7 @@ def test_ai_veto_blocks_buy():
 
 def test_fill_parsing_fees():
     o = {"filled_quantity": "0.002", "filled_amount": "100", "average_fill_price": "50000", "total_fee": "0.000002", "fee_currency": "BTC"}
-    qty, avg, spent, fee = office.fill_from_order(o, "buy", "BTC", 0, 0.0009)
+    qty, _, spent, fee = office.fill_from_order(o, "buy", "BTC", 0, 0.0009)
     assert abs(qty - 0.001998) < 1e-12 and spent == 100 and abs(fee - 0.1) < 1e-9
     _, _, proceeds, fee = office.fill_from_order({**o, "total_fee": "0.09", "fee_currency": "EUR"}, "sell", "BTC", 0, 0.0009)
     assert abs(proceeds - 99.91) < 1e-9

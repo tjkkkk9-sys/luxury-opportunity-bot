@@ -8,7 +8,7 @@ esattamente la logica che gira sul conto.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from . import indicators as ind
 
@@ -21,7 +21,7 @@ def parse_ts(v) -> float:
     if s.isdigit():
         n = int(s)
         return n / 1000 if n > 1e11 else float(n)
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    return datetime.fromisoformat(s).timestamp()
 
 
 def normalize(candles: list[dict]) -> list[dict]:
@@ -83,7 +83,7 @@ def analyze(symbol: str, candles: list[dict], cfg: dict, series: dict | None = N
     s = series or compute(candles)
     i = len(candles) - 1 if i is None else i
     price = candles[i]["c"]
-    g = lambda k, j=i: s[k][j] if 0 <= j < len(s[k]) else None  # noqa: E731
+    g = lambda k, j=i: s[k][j] if 0 <= j < len(s[k]) else None
     e20, e50, e200, r, a, x, m, mprev, res = (
         g("ema20"), g("ema50"), g("ema200"), g("rsi"), g("atr"), g("adx"), g("macd_h"), g("macd_h", i - 1), g("res20"))
     base = {"symbol": symbol, "price": price, "t": candles[i]["t"], "score": 0, "action": "ATTESA", "reasons": [],

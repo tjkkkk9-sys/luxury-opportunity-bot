@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import safety, strategy as st
+from . import safety
+from . import strategy as st
 
 
 def run(data: dict[str, list[dict]], cfg: dict, start_eur: float = 40.0, slippage: float = 0.0005, fee_mult: float = 1.0):
@@ -35,7 +36,7 @@ def run(data: dict[str, list[dict]], cfg: dict, start_eur: float = 40.0, slippag
     day_pnl = week_pnl = 0.0
     peak = start_eur
     for t in times:
-        dt = datetime.fromtimestamp(t, timezone.utc)
+        dt = datetime.fromtimestamp(t, UTC)
         d, w = dt.date(), dt.isocalendar()[:2]
         if d != day:
             day, day_pnl = d, 0.0
@@ -82,13 +83,13 @@ def run(data: dict[str, list[dict]], cfg: dict, start_eur: float = 40.0, slippag
         if (peak - equity) / peak * 100 >= cfg["max_drawdown_pct"]:
             continue
         exposure = sum(p["cost"] for p in positions.values())
-        for sym in data:
+        for sym, candles in data.items():
             if sym in positions or len(positions) + len(pending) >= cfg["max_open_positions"] or cooldown.get(sym, 0) > now:
                 continue
             i = index[sym].get(t)
             if i is None or i < 220:
                 continue
-            sig = st.analyze(sym, data[sym], cfg, series[sym], i)
+            sig = st.analyze(sym, candles, cfg, series[sym], i)
             if sig["action"] != "COMPRA":
                 continue
             eur, _ = st.size_position(sig, cash, equity, cfg)
@@ -144,7 +145,7 @@ if __name__ == "__main__":
     start = cfg["paper_start_eur"]
     first = min(cs[220]["t"] for cs in data.values())
     last = max(cs[-1]["t"] for cs in data.values())
-    print(f"Periodo valutato: {datetime.fromtimestamp(first, timezone.utc):%d/%m/%Y} – {datetime.fromtimestamp(last, timezone.utc):%d/%m/%Y}")
+    print(f"Periodo valutato: {datetime.fromtimestamp(first, UTC):%d/%m/%Y} – {datetime.fromtimestamp(last, UTC):%d/%m/%Y}")
     res, _, _ = run(data, cfg, start)
     print("Costi normali:", json.dumps(res, indent=2, ensure_ascii=False))
     res2, _, _ = run(data, cfg, start, fee_mult=2.0)

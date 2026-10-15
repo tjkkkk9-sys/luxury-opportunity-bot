@@ -1,0 +1,7 @@
+extend = "../pyproject.toml"
+
+[lint]
+# BLE001: il desk è fail-closed. Qualunque errore (rete, API, dati, IA) deve trasformarsi
+# in "nessun acquisto" o "ordine in sospeso", mai in un turno interrotto a metà:
+# per questo alcuni punti catturano volutamente ogni Exception.
+extend-ignore = ["BLE001"]
