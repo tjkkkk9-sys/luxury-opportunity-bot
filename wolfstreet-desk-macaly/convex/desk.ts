@@ -9,6 +9,9 @@ import type { ActionCtx } from "./_generated/server"
 import { esc, Office, selftest as runSelftest } from "./lib/office"
 import type { AiReview } from "./lib/office"
 import { keyFingerprint, normalizePem, RevolutX } from "./lib/revolutx"
+import { analyzeCfd, byId, clampP500, followIdea, parseYahoo } from "./lib/plus500"
+import type { Idea } from "./lib/plus500"
+import type { Candle } from "./lib/strategy"
 
 // ------------------------------------------------------------- segreti cifrati
 // La chiave AES deriva (HKDF) da JWT_PRIVATE_KEY, un segreto che esiste solo tra le variabili del
@@ -204,4 +207,88 @@ export const saveOptionalSecret = action({
     else await ctx.runMutation(internal.store.deleteSecretRow, { name })
     return { ok: true }
   },
+})
+
+// ------------------------------------------------------------- Plus500: analista + avvisi (esecuzione manuale)
+async function yahoo1h(symbol: string): Promise<Candle[]> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1h&range=120d`
+  let last = ""
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (WolfStreetDesk)" }, signal: AbortSignal.timeout(20_000) })
+      if (!r.ok) { last = `HTTP ${r.status}`; continue }
+      return parseYahoo(await r.json()).candles
+    } catch (e: any) { last = e?.message ?? String(e) }
+  }
+  throw new Error(`dati ${symbol} non disponibili (${last})`)
+}
+const fp = (n: number | undefined | null) => (n == null ? "—" : Number(n).toLocaleString("it-IT", { maximumSignificantDigits: 6 }))
+
+export const runPlus500 = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const now = Math.floor(Date.now() / 1000)
+    const { config, state } = await ctx.runQuery(internal.store.readP500, {})
+    const cfg = clampP500(config)
+    const ideas: Record<string, Idea> = state.ideas ?? {}
+    const alerted: Record<string, number> = state.alerted ?? {}
+    const log: any[] = state.log ?? []
+    const events: string[] = [], errors: string[] = []
+    let eurUsd: number | null = null
+    const data: Record<string, Candle[]> = {}
+    for (const id of new Set(["eurusd", ...cfg.enabled, ...Object.keys(ideas)])) {
+      const inst = byId(id)
+      if (!inst) continue
+      try { data[id] = await yahoo1h(inst.yahoo) } catch (e: any) { errors.push(`${inst.name}: ${e.message}`) }
+    }
+    const fx = data.eurusd?.at(-1)?.c
+    if (fx && now - (data.eurusd.at(-1)!.t) < 4 * 86400) eurUsd = fx
+    const signals = []
+    for (const id of cfg.enabled) {
+      const inst = byId(id)!
+      const sig = analyzeCfd(inst, data[id] ?? [], now, eurUsd, cfg)
+      signals.push(sig)
+      if ((sig.side === "LONG" || sig.side === "SHORT") && !ideas[id] && alerted[id] !== sig.t && sig.plan && sig.t) {
+        alerted[id] = sig.t
+        ideas[id] = { id, side: sig.side, entry: sig.price!, stop: sig.stop!, target: sig.target!, atr: sig.ind.atr, t: sig.t, opened: now, be: false }
+        const verb = sig.side === "LONG" ? "COMPRA" : "VENDI"
+        log.push({ t: now, id, text: `${verb} ${inst.name} a ${fp(sig.price)} · stop ${fp(sig.stop)} · limite ${fp(sig.target)} · punteggio ${sig.score}`, level: "signal" })
+        events.push(`${sig.side === "LONG" ? "🟢" : "🔴"} <b>${verb} ${esc(inst.name)}</b> (${sig.side}) · punteggio ${sig.score}/100
+Prezzo ${fp(sig.price)} · Stop ${fp(sig.stop)} · Limite ${fp(sig.target)}
+Valore posizione ≈ ${sig.plan.exposure_eur.toFixed(0)} € · margine ≈ ${sig.plan.margin_eur.toFixed(0)} €
+Se scatta lo stop perdi ≈ ${sig.plan.risk_eur.toFixed(2)} €, al limite guadagni ≈ ${sig.plan.reward_eur.toFixed(2)} €
+${sig.reasons.slice(0, 3).map((r) => "• " + esc(r)).join("\n")}
+➜ Su Plus500: ${verb === "COMPRA" ? "Compra" : "Vendi"}, imposta Stop Loss e Take Profit ai livelli sopra. Il desk non apre ordini.`)
+      }
+    }
+    for (const [id, idea] of Object.entries(ideas)) {
+      const inst = byId(id)
+      const bars = data[id]
+      if (!inst || !bars?.length) continue
+      const sig = signals.find((x) => x.id === id)
+      const r = followIdea(idea, bars, sig?.ind && Object.keys(sig.ind).length ? sig.ind : null, now, cfg)
+      if (r.move_be) {
+        idea.be = true; idea.stop = idea.entry
+        log.push({ t: now, id, text: `${inst.name}: porta lo stop a pareggio (${fp(idea.entry)})`, level: "info" })
+        events.push(`🛡️ <b>${esc(inst.name)}</b>: il prezzo è andato a favore di ${cfg.breakeven_atr} ATR. Se sei dentro, sposta lo Stop Loss a pareggio: <b>${fp(idea.entry)}</b>`)
+      }
+      if (r.close) {
+        delete ideas[id]
+        const d = idea.side === "LONG" ? 1 : -1
+        const pct = r.px ? ((r.px - idea.entry) / idea.entry) * 100 * d : 0
+        log.push({ t: now, id, text: `${inst.name} ${idea.side}: ${r.close} a ${fp(r.px)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% sul prezzo)`, level: pct >= 0 ? "win" : "loss" })
+        const manual = r.close === "TREND ROTTO" || r.close === "TEMPO SCADUTO"
+        events.push(`${pct >= 0 ? "✅" : "⛔"} <b>${esc(inst.name)} ${idea.side}</b>: ${r.close} a ${fp(r.px)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)${manual ? "\n➜ Se sei ancora dentro, valuta di chiudere su Plus500." : "\n➜ Su Plus500 la posizione si chiude da sola se avevi impostato Stop/Limite."}`)
+      }
+    }
+    const view = { generated_at: now, eur_usd: eurUsd, signals, ideas: Object.values(ideas), log: log.slice(-60).reverse(), errors, config: cfg }
+    await ctx.runMutation(internal.store.saveP500, { state: JSON.stringify({ ideas, alerted, log: log.slice(-200) }), view: JSON.stringify(view) })
+    if (events.length) await telegram(ctx, `🐺 <b>Plus500 · Wolf Street</b>\n\n${events.join("\n\n")}`)
+    return { ok: true, signals: signals.map((x) => `${x.id}:${x.side}:${x.score}`), errors }
+  },
+})
+
+export const plus500Now = action({
+  args: {},
+  handler: async (ctx) => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runPlus500, {}) },
 })

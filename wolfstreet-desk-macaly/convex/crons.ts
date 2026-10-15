@@ -7,4 +7,7 @@ const crons = cronJobs()
 // Senza chiavi Revolut X il turno si ferma subito senza fare nulla.
 crons.interval("turno ufficio", { minutes: 30 }, internal.desk.runTurn, {})
 
+// Analista Plus500 ogni 30 minuti: solo segnali e avvisi Telegram, nessun ordine (Plus500 non ha API).
+crons.interval("analista plus500", { minutes: 30 }, internal.desk.runPlus500, {})
+
 export default crons

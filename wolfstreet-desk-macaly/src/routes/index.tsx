@@ -43,7 +43,7 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="wrap">
       <header className="top">
-        <small>Desk Revolut X</small>
+        <small>Desk Plus500 · Revolut X</small>
         <h1>Wolf Street <span>Capital</span></h1>
       </header>
       <div className="stack">{children}</div>
@@ -108,12 +108,12 @@ function NotOwner() {
 }
 
 // ------------------------------------------------------------------ desk
-const TABS = [["ufficio", "Ufficio"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
+const TABS = [["plus500", "Plus500"], ["ufficio", "Revolut X"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
 type Tab = (typeof TABS)[number][0]
 
 function Desk() {
   const data = useQuery(api.store.view, {})
-  const [tab, setTab] = useState<Tab>("ufficio")
+  const [tab, setTab] = useState<Tab>("plus500")
   useEffect(() => { const h = location.hash.slice(1); if (TABS.some(([t]) => t === h)) setTab(h as Tab) }, [])
   const go = (t: Tab) => { setTab(t); history.replaceState(null, "", "#" + t) }
   if (data === undefined) return <Shell><p className="note">Caricamento…</p></Shell>
@@ -122,7 +122,7 @@ function Desk() {
   const keysReady = data.keys.revx_api_key && data.keys.revx_private_key
   return (
     <div className="wrap">
-      <Header D={D} control={data.control} keysReady={keysReady} />
+      <Header D={D} control={data.control} keysReady={keysReady || tab === "plus500"} p500={tab === "plus500"} />
       <nav className="tabs" aria-label="Sezioni">
         <div role="tablist">
           {TABS.map(([id, label]) => (
@@ -130,6 +130,7 @@ function Desk() {
           ))}
         </div>
       </nav>
+      {tab === "plus500" && <Plus500 />}
       {tab === "ufficio" && <Ufficio D={D} keysReady={keysReady} go={go} />}
       {tab === "mercato" && <Mercato D={D} />}
       {tab === "posizioni" && <Posizioni D={D} />}
@@ -139,7 +140,16 @@ function Desk() {
   )
 }
 
-function Header({ D, control, keysReady }: { D: any; control: any; keysReady: boolean }) {
+function Header({ D, control, keysReady, p500 }: { D: any; control: any; keysReady: boolean; p500?: boolean }) {
+  if (p500) return (
+    <header className="top">
+      <div className="brand">
+        <div><small>Desk Plus500 · segnali CFD</small><h1>Wolf Street <span>Capital</span></h1></div>
+        <div className="status"><span className="pill paper"><span className="dot" />Esecuzione manuale</span></div>
+      </div>
+      <div className="banners"><div className="banner">Plus500 non ha API: il desk analizza e ti avvisa, l'ordine lo apri tu dall'app Plus500 con Stop Loss e Take Profit. I CFD con leva possono far perdere più in fretta di quanto pensi: rispetta sempre lo stop.</div></div>
+    </header>
+  )
   const mode = String(D.mode ?? control.mode ?? "shadow").toLowerCase()
   const banners: ReactNode[] = []
   if (!keysReady) banners.push(<div key="k" className="banner">Mancano le chiavi Revolut X: vai su <b>Comandi → Chiavi Revolut X</b>. Finché non ci sono il desk resta spento.</div>)
@@ -472,5 +482,107 @@ function Opzionali({ data }: { data: any }) {
       ))}
       {msg && <p className="note" role="status">{msg}</p>}
     </article>
+  )
+}
+
+// ------------------------------------------------------------------ Plus500 (segnali, esecuzione manuale)
+const P500_LIST: [string, string][] = [["brent", "Petrolio Brent"], ["wti", "Petrolio WTI"], ["oro", "Oro"], ["argento", "Argento"], ["gas", "Gas naturale"], ["usa500", "USA 500"], ["usatech", "USA Tech 100"], ["germany40", "Germany 40"], ["eurusd", "EUR/USD"]]
+
+function Plus500() {
+  const data = useQuery(api.store.p500View, {})
+  const run = useAction(api.desk.plus500Now)
+  const saveCfg = useMutation(api.store.saveP500Config)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState("")
+  const V: any = data?.view ?? {}
+  const c: any = V.config ?? { ...data?.config }
+  const [cap, setCap] = useState(""), [risk, setRisk] = useState("")
+  useEffect(() => { if (c.capital_eur) { setCap(String(c.capital_eur)); setRisk(String(c.risk_pct)) } }, [c.capital_eur, c.risk_pct])
+  if (data === undefined) return <p className="note">Caricamento…</p>
+  if (data === null) return <NotOwner />
+  const enabled: string[] = c.enabled ?? ["brent", "wti", "oro", "usatech", "germany40", "eurusd"]
+  async function analyze() {
+    setBusy(true); setMsg("")
+    try { const r: any = await run({}); setMsg(r.errors?.length ? `Analisi fatta, con avvisi: ${r.errors.join(" · ")}` : "Analisi aggiornata.") }
+    catch (e: any) { setMsg(e?.message ?? "Errore") } finally { setBusy(false) }
+  }
+  async function save(patch: any) {
+    setMsg("")
+    try { await saveCfg({ patch: JSON.stringify(patch) }); setMsg("Salvato. Vale dalla prossima analisi.") } catch (e: any) { setMsg(e?.message ?? "Errore") }
+  }
+  const sigs: any[] = V.signals ?? []
+  const active = sigs.filter((s) => s.side === "LONG" || s.side === "SHORT")
+  return (
+    <section className="view split">
+      <article className="panel span2">
+        <div className="ph"><h2>Segnali Plus500</h2><span className="eyebrow">{V.generated_at ? `analisi ${when(V.generated_at)} (${ago(V.generated_at)})` : "nessuna analisi ancora"}</span></div>
+        <div className="row">
+          <button onClick={() => void analyze()} disabled={busy}>{busy ? "Analizzo…" : "Analizza adesso"}</button>
+          {!data.telegram && <span className="note">Per ricevere gli avvisi sul telefono collega Telegram in <b>Revolut X → Comandi</b> (token e chat ID).</span>}
+        </div>
+        {msg && <p className="note">{msg}</p>}
+        {(V.errors ?? []).map((e: string) => <div key={e} className="banner err">{e}</div>)}
+        {active.length ? active.map((s) => <P500Card key={s.id} s={s} min={c.min_score} />) : <p className="empty">{V.generated_at ? "Nessun ingresso valido adesso: il desk aspetta un'occasione pulita. Meglio nessuna operazione che una cattiva." : "Premi \"Analizza adesso\" per la prima analisi; poi gira da solo ogni 30 minuti."}</p>}
+      </article>
+      <article className="panel">
+        <div className="ph"><h2>Segnali in corso</h2><span className="eyebrow">li seguo io e ti avviso</span></div>
+        {(V.ideas ?? []).length ? V.ideas.map((i: any) => (
+          <div className="pos" key={i.id}>
+            <div className="row between"><b>{P500_LIST.find(([k]) => k === i.id)?.[1] ?? i.id}</b><span className={`chip ${i.side === "LONG" ? "c-buy" : "c-avoid"}`}>{i.side === "LONG" ? "COMPRA" : "VENDI"}</span></div>
+            <div className="rl num"><span>stop {fmtPx(i.stop)}{i.be ? " (pareggio)" : ""}</span><span>ingresso {fmtPx(i.entry)}</span><span>limite {fmtPx(i.target)}</span></div>
+          </div>
+        )) : <p className="empty">Nessun segnale aperto.</p>}
+      </article>
+      <article className="panel">
+        <div className="ph"><h2>Il tuo conto Plus500</h2><span className="eyebrow">per calcolare quanto aprire</span></div>
+        <div className="form">
+          <label htmlFor="cap">Capitale sul conto (€)</label>
+          <input id="cap" inputMode="decimal" value={cap} onChange={(e) => setCap(e.target.value)} />
+          <label htmlFor="risk">Rischio per operazione (% del capitale, max 2)</label>
+          <input id="risk" inputMode="decimal" value={risk} onChange={(e) => setRisk(e.target.value)} />
+          <button className="ghost" onClick={() => void save({ capital_eur: Number(cap.replace(",", ".")), risk_pct: Number(risk.replace(",", ".")) })}>Salva</button>
+        </div>
+        <p className="note">Con {fmtEur(c.capital_eur)} e {c.risk_pct ?? "—"}% rischi al massimo {fmtEur((c.capital_eur * c.risk_pct) / 100)} per operazione se scatta lo stop. Margine massimo per operazione {c.max_margin_pct ?? 25}% del capitale.</p>
+      </article>
+      <article className="panel span2">
+        <div className="ph"><h2>Strumenti seguiti</h2><span className="eyebrow">tocca per attivare o togliere</span></div>
+        <div className="filters">
+          {P500_LIST.map(([id, name]) => {
+            const on = enabled.includes(id)
+            return <button key={id} className="fbtn" aria-pressed={on} onClick={() => void save({ enabled: on ? enabled.filter((x) => x !== id) : [...enabled, id] })}>{name}</button>
+          })}
+        </div>
+        <div className="tw"><table><tbody>
+          {sigs.length ? sigs.map((s) => (
+            <tr key={s.id}><td>{s.name}</td><td className="r num">{fmtPx(s.price)}</td>
+              <td><span className={`chip ${s.side === "LONG" ? "c-buy" : s.side === "SHORT" ? "c-avoid" : "c-wait"}`}>{s.side === "LONG" ? "COMPRA" : s.side === "SHORT" ? "VENDI" : s.side}</span></td>
+              <td className="r num muted">rialzo {s.long_score} · ribasso {s.short_score}</td></tr>
+          )) : <tr><td className="empty">Nessuna analisi ancora.</td></tr>}
+        </tbody></table></div>
+      </article>
+      <article className="panel span2">
+        <div className="ph"><h2>Storico avvisi</h2></div>
+        <ol className="log">
+          {(V.log ?? []).length ? V.log.map((l: any, i: number) => <li key={i} className={l.level === "loss" ? "error" : l.level === "win" ? "info" : ""}><time>{when(l.t)}</time><div><span className="txt">{l.text}</span></div></li>)
+            : <li><span /><span className="empty">Nessun avviso ancora.</span></li>}
+        </ol>
+        <p className="note">Regole: candele 4h chiuse, si entra solo a favore del trend (EMA50/EMA200) dopo una correzione, quando RSI e MACD ripartono. Stop {c.stop_atr ?? 3}× ATR, limite {c.tp_atr ?? 4}× ATR, stop a pareggio dopo {c.breakeven_atr ?? 2}× ATR. Dati: futures e cambi pubblici (Yahoo Finance), i prezzi Plus500 possono differire di poco: usa i livelli come riferimento e controlla lo spread.</p>
+      </article>
+    </section>
+  )
+}
+
+function P500Card({ s, min }: { s: any; min: number }) {
+  const long = s.side === "LONG"
+  return (
+    <div className="sig">
+      <div><span className="sym">{s.name}</span> <span className="px num">{fmtPx(s.price)}</span></div>
+      <div><span className={`chip ${long ? "c-buy" : "c-avoid"}`}>{long ? "COMPRA" : "VENDI"}</span> <span className="num">{s.score}</span></div>
+      <div className="bar" aria-label={`punteggio ${s.score} su 100`}><span style={{ width: `${s.score}%` }} /><em style={{ left: `${min ?? 80}%` }} /></div>
+      <div className="meta full"><span>Stop Loss <b className="num">{fmtPx(s.stop)}</b></span><span>Take Profit <b className="num">{fmtPx(s.target)}</b></span><span>RSI <b className="num">{s.ind?.rsi?.toFixed(0) ?? "—"}</b></span></div>
+      {s.plan && <div className="meta full"><span>Valore posizione ≈ <b className="num">{fmtEur(s.plan.exposure_eur)}</b></span><span>margine ≈ <b className="num">{fmtEur(s.plan.margin_eur)}</b></span><span>se stop <b className="num down">−{fmtEur(s.plan.risk_eur)}</b></span><span>se limite <b className="num up">+{fmtEur(s.plan.reward_eur)}</b></span></div>}
+      <ul className="why">{(s.reasons ?? []).map((r: string) => <li key={r}>{r}</li>)}</ul>
+      <p className="why flat">Su Plus500: {long ? "Compra" : "Vendi"} {s.name}, imposta l'importo vicino a {fmtEur(s.plan?.exposure_eur)} di valore, Stop Loss {fmtPx(s.stop)}, Take Profit {fmtPx(s.target)}.</p>
+    </div>
   )
 }

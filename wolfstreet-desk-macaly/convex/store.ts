@@ -162,3 +162,32 @@ export const saveConfig = mutation({
     await putKV(ctx, "config", JSON.stringify({ ...cur, ...p }))
   },
 })
+
+// ---------------------------------------------------------- Plus500 (solo segnali, nessun ordine)
+export const readP500 = internalQuery({
+  args: {},
+  handler: async (ctx) => ({ config: parse(await getKV(ctx, "p500_config"), {}), state: parse(await getKV(ctx, "p500_state"), {}) }),
+})
+export const saveP500 = internalMutation({
+  args: { state: v.string(), view: v.string() },
+  handler: async (ctx, a) => { await putKV(ctx, "p500_state", a.state); await putKV(ctx, "p500_view", a.view) },
+})
+export const p500View = query({
+  args: {},
+  handler: async (ctx) => {
+    if (!(await ownerEmail(ctx))) return null
+    const tg = !!(await ctx.db.query("secrets").withIndex("name", (q) => q.eq("name", "telegram_token")).unique())
+    return { view: parse(await getKV(ctx, "p500_view"), null), config: parse(await getKV(ctx, "p500_config"), {}), telegram: tg }
+  },
+})
+export const saveP500Config = mutation({
+  args: { patch: v.string() },
+  handler: async (ctx, { patch }) => {
+    await requireOwner(ctx)
+    const allowed = ["enabled", "capital_eur", "risk_pct", "max_margin_pct", "min_score"]
+    const p = parse(patch, {})
+    for (const k of Object.keys(p)) if (!allowed.includes(k)) throw new Error(`Campo non modificabile: ${k}`)
+    const cur = parse(await getKV(ctx, "p500_config"), {})
+    await putKV(ctx, "p500_config", JSON.stringify({ ...cur, ...p }))
+  },
+})

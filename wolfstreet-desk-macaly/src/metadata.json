@@ -1,12 +1,12 @@
 {
   "default": {
     "title": "Wolf Street Desk",
-    "description": "Desk di trading crypto su Revolut X: analisi su candele reali, limiti di rischio fissi, SHADOW, PAPER e LIVE sotto chiave.",
+    "description": "Desk Wolf Street Capital: segnali Plus500 con stop e target, avvisi Telegram, e desk automatico Revolut X.",
     "openGraph": {}
   },
   "/": {
     "title": "Wolf Street Desk",
-    "description": "Desk di trading crypto su Revolut X: analisi su candele reali, limiti di rischio fissi, SHADOW, PAPER e LIVE sotto chiave.",
+    "description": "Desk Wolf Street Capital: segnali Plus500 con stop e target, avvisi Telegram, e desk automatico Revolut X.",
     "openGraph": {}
   }
 }
