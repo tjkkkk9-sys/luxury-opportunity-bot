@@ -52,3 +52,32 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 .sala-hint { position: absolute; left: 10px; bottom: 10px; font: 400 11px/1.3 var(--mono); color: hsl(var(--muted)); background: rgba(0,0,0,.5); padding: 5px 9px; border-radius: 6px; pointer-events: none; }
 .sala-err { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; }
 @media (max-width: 520px) { .sala-stage { height: 440px; } .sala-tag i { display: none; } }
+
+/* ---------- sala 3D: stato reale e schede ruolo ---------- */
+.sala-tag b { display: block; font-weight: 700; }
+.sala-tag[data-status="in attesa"] { background: hsl(46 30% 70% / .55); box-shadow: none; }
+.sala-tag[data-status="non connesso"] { background: hsl(220 6% 55% / .5); color: #1a1a1a; box-shadow: none; }
+.sala-tag[data-status="errore"] { background: hsl(4 80% 62% / .9); color: #fff; }
+.sala-tag[data-status="errore"] i { color: #fff; }
+.sala-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 10px; font-size: 12px; color: hsl(var(--muted)); }
+.sala-status b { color: hsl(var(--ink)); font-weight: 600; }
+.sala-mode { font: 700 11px/1 var(--mono); letter-spacing: .12em; padding: 6px 10px; border-radius: 99px; border: 1px solid hsl(var(--line)); color: hsl(var(--muted)); }
+.sala-mode.live { color: hsl(var(--up)); border-color: hsl(var(--up) / .6); background: hsl(var(--up-soft)); }
+.sala-mode.bad { color: hsl(var(--down)); border-color: hsl(var(--down) / .6); background: hsl(var(--down-soft)); }
+.sala-mode.idle { color: hsl(var(--gold)); border-color: hsl(var(--gold) / .5); }
+.sala-reason { color: hsl(var(--warn)); }
+.sala-roles { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.sala-role { border: 1px solid hsl(var(--line)); border-left: 3px solid var(--rc, hsl(var(--gold))); border-radius: 10px; padding: 10px 12px; background: hsl(var(--panel)); min-width: 0; }
+.sala-role.ANALISTA { --rc: #6fa8ff; } .sala-role.RISK { --rc: #ff8a5c; } .sala-role.TRADER { --rc: #45c98a; } .sala-role.SISTEMA { --rc: hsl(var(--gold)); }
+.sala-role-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sala-role-h b { font-size: 14px; color: hsl(var(--ink)); }
+.sala-pill { font: 600 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 4px 7px; border-radius: 99px; border: 1px solid hsl(var(--line)); color: hsl(var(--muted)); white-space: nowrap; }
+.sala-role[data-status="attivo"] .sala-pill { color: hsl(var(--up)); border-color: hsl(var(--up) / .5); }
+.sala-role[data-status="errore"] .sala-pill { color: hsl(var(--down)); border-color: hsl(var(--down) / .6); }
+.sala-role[data-status="non connesso"] { opacity: .7; }
+.sala-job { margin: 6px 0; font-size: 11.5px; color: hsl(var(--muted)); line-height: 1.35; }
+.sala-say { margin: 0; font-size: 13px; line-height: 1.4; color: hsl(var(--ink)); overflow-wrap: anywhere; }
+.sala-say time { font: 400 11px var(--mono); color: hsl(var(--faint)); margin-right: 4px; }
+.sala-more { margin: 4px 0 0; font-size: 11px; color: hsl(var(--faint)); }
+@media (max-width: 900px) { .sala-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 420px) { .sala-roles { grid-template-columns: 1fr; } .sala-stage { height: 380px; } }

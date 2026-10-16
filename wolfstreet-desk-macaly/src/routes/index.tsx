@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import type { FormEvent, ReactNode } from "react"
 import { api } from "../../convex/_generated/api"
 import siteMetadata from "../metadata.json"
+import { ROLE_IDS, ROLE_INFO, fmtWait, salaState } from "../components/sala-state"
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [{ title: siteMetadata["/"].title }, { name: "description", content: siteMetadata["/"].description }] }),
@@ -703,33 +704,60 @@ function Room({ D }: { D: any }) {
   )
 }
 
-// ------------------------------------------------------------------ sala operativa 3D (dati veri dell'ultimo turno)
+// ------------------------------------------------------------------ sala operativa 3D (solo dati veri del backend)
 function Sala({ D }: { D: any }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tagsRef = useRef<HTMLDivElement>(null)
   const dataRef = useRef<any>(D)
   dataRef.current = D
   const [err, setErr] = useState("")
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => { const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000); return () => clearInterval(id) }, [])
   useEffect(() => {
     let stop: (() => void) | undefined, alive = true
     import("../components/sala3d")
       .then((m) => { if (alive && canvasRef.current && tagsRef.current) stop = m.mountSala(canvasRef.current, tagsRef.current, () => dataRef.current) })
-      .catch(() => setErr("La grafica 3D non si è caricata su questo dispositivo."))
+      .catch(() => setErr("La grafica 3D non si è caricata su questo dispositivo. Lo stato dei bot resta qui sotto."))
     return () => { alive = false; stop?.() }
   }, [])
+  const S = salaState(D, now)
   const nextView = () => { if (canvasRef.current) canvasRef.current.dispatchEvent(new MouseEvent("dblclick")) }
-  const log = (D.log ?? []).filter((l: any) => ["ANALISTA", "RISK", "TRADER", "SISTEMA"].includes(l.bot)).slice(0, 10)
+  const log = (D?.log ?? []).filter((l: any) => (ROLE_IDS as readonly string[]).includes(l.bot)).slice(0, 10)
+  const modeCls = !S.connected ? "off" : S.killSwitch ? "bad" : S.liveConfirmed ? "live" : "idle"
   return (
     <section className="view split">
       <article className="panel span2 sala-wrap">
         <div className="ph"><h2>Sala operativa</h2><button className="ghost" onClick={nextView}>Cambia vista</button></div>
+        <div className="sala-status" role="status">
+          <span className={`sala-mode ${modeCls}`}>{S.modeLabel}</span>
+          <span>Ultimo turno: <b>{S.turnAt ? `${when(S.turnAt)} · ${Math.round((S.ageS ?? 0) / 60)} min fa` : "nessuno"}</b></span>
+          <span>Prossimo turno: <b>{S.connected ? fmtWait(S.nextInS) : "—"}</b></span>
+          {!S.connected && <span className="sala-reason">{S.reason}</span>}
+        </div>
         <div className="sala-stage">
-          <canvas ref={canvasRef} className="sala-canvas" aria-label="Sala operativa 3D: i quattro bot del desk lavorano alle loro postazioni e si passano i dati" />
-          <div ref={tagsRef} className="sala-tags" />
-          <span className="sala-hint">Trascina per girare · rotella o pizzica per avvicinarti · doppio tocco cambia vista</span>
+          <canvas ref={canvasRef} className="sala-canvas" aria-label="Sala operativa 3D: le quattro postazioni del desk. Lo stato di ogni bot è scritto anche nelle schede qui sotto." />
+          <div ref={tagsRef} className="sala-tags" aria-hidden="true" />
+          <span className="sala-hint">Trascina per girare · pizzica per avvicinarti · doppio tocco cambia vista</span>
           {err && <p className="banner err sala-err">{err}</p>}
         </div>
-        <p className="note">Schermi e fumetti mostrano i dati veri dell'ultimo turno ({D.generated_at ? when(D.generated_at) : "—"}) e si aggiornano da soli a ogni turno. I movimenti dei bot rappresentano il lavoro del turno: analisi, rischio, ordine, registrazione.</p>
+        <ul className="sala-roles" aria-live="polite" aria-label="Stato dei bot">
+          {ROLE_IDS.map((id) => {
+            const r = S.roles[id], e = r.turnEntries[0] ?? null
+            return (
+              <li key={id} className={`sala-role ${id}`} data-status={r.status}>
+                <div className="sala-role-h"><b>{ROLE_INFO[id].title}</b><span className="sala-pill">{r.status}</span></div>
+                <p className="sala-job">{ROLE_INFO[id].job}</p>
+                <p className="sala-say">
+                  {!S.connected ? "Non connesso: nessun dato recente dal desk."
+                    : e ? <><time>{when(e.t)}</time> {e.text}</>
+                    : "Nessuna voce in questo turno."}
+                </p>
+                {S.connected && r.turnEntries.length > 1 && <p className="sala-more">+{r.turnEntries.length - 1} altre voci nel turno</p>}
+              </li>
+            )
+          })}
+        </ul>
+        <p className="note">Ogni movimento, schermo e fumetto viene dal registro reale dell'ultimo turno: i bot si animano solo quando arriva un turno nuovo e fanno solo ciò che il registro dice. Senza dati recenti la sala resta ferma e segna «non connesso». La sala non può comprare, vendere o cambiare regole.</p>
       </article>
       <article className="panel span2">
         <div className="ph"><h2>Cosa dicono i bot</h2><span className="eyebrow">registro reale</span></div>

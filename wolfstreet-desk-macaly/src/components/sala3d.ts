@@ -1,45 +1,29 @@
-// Sala operativa 3D: quattro bot (Analista, Risk, Trader, Sistema) alle loro scrivanie.
-// Gli schermi e i fumetti usano i dati veri dell'ultimo turno del desk; i movimenti sono animazione.
+// Sala operativa 3D: le quattro postazioni del desk (Analista, Risk, Trader, Sistema).
+// Ogni movimento nasce da un evento reale del backend: un nuovo turno e le voci del registro di quel turno.
+// Tra un turno e l'altro i bot stanno fermi alla loro postazione. Senza dati la sala si spegne: "non connesso".
 import * as THREE from "three"
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js"
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js"
+import { fmtWait, ROLE_INFO, salaState } from "./sala-state"
+import type { RoleId, SalaState } from "./sala-state"
 
-// Figura umana con animazioni da motion capture (idle, camminata, annuire, scuotere la testa).
 const HUMAN_URL = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/eyQqA07Y-IQBBs0mOVim5/trader-human-PbjW_jnI.glb"
-
-type D = any
 const GOLD = 0xe8be5c
-const ROLES = [
-  { id: "ANALISTA", color: 0x7fb8ff, angle: -2.35 },
-  { id: "RISK", color: 0xff9b6a, angle: -0.8 },
-  { id: "TRADER", color: 0x4fd394, angle: 0.8 },
-  { id: "SISTEMA", color: GOLD, angle: 2.35 },
-] as const
-
+const ROLES: { id: RoleId; color: number; suit: number; angle: number }[] = [
+  { id: "ANALISTA", color: 0x6fa8ff, suit: 0x1b2638, angle: -2.35 },
+  { id: "RISK", color: 0xff8a5c, suit: 0x33221f, angle: -0.8 },
+  { id: "TRADER", color: 0x45c98a, suit: 0x18291f, angle: 0.8 },
+  { id: "SISTEMA", color: GOLD, suit: 0x2a261d, angle: 2.35 },
+]
+const css = (c: number) => `#${c.toString(16).padStart(6, "0")}`
 const fmt = (n: unknown, d = 0) => {
   const v = Number(n)
   return Number.isFinite(v) ? v.toLocaleString("it-IT", { minimumFractionDigits: d, maximumFractionDigits: d }) : "—"
 }
+const STATUS_LABEL: Record<string, string> = { attivo: "attivo in questo turno", "in attesa": "nessuna azione in questo turno", errore: "errore nel turno", "non connesso": "non connesso" }
 
-/** Turni reali ogni 30 minuti ai minuti :17 e :47 UTC. */
-export function secondsToNextTurn(): number {
-  const now = new Date(), t = new Date(now)
-  t.setUTCSeconds(0, 0)
-  const m = now.getUTCMinutes()
-  if (m < 17) t.setUTCMinutes(17)
-  else if (m < 47) t.setUTCMinutes(47)
-  else { t.setUTCHours(t.getUTCHours() + 1); t.setUTCMinutes(17) }
-  return Math.max(0, Math.round((t.getTime() - now.getTime()) / 1000))
-}
-
-/** Ultima frase vera di ogni bot, dal registro del desk (più recente per prima). */
-function lastSay(d: D, bot: string): string {
-  const l = (d?.log ?? []).find((x: any) => x.bot === bot)
-  return l ? String(l.text) : ""
-}
-
-export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getData: () => D): () => void {
+export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getData: () => any): () => void {
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
@@ -47,348 +31,396 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.outputEncoding = THREE.sRGBEncoding
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.15
+  renderer.toneMappingExposure = 1.1
   const scene = new THREE.Scene()
-  scene.fog = new THREE.Fog(0x07080b, 22, 60)
+  scene.background = new THREE.Color(0x07080b)
+  scene.fog = new THREE.Fog(0x07080b, 20, 46)
   const pmrem = new THREE.PMREMGenerator(renderer)
   const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-  // riflessi solo sulle persone: la sala resta scura e calda
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
 
-  scene.add(new THREE.HemisphereLight(0x8a90a8, 0x0a0a0c, 0.55))
-  const key = new THREE.SpotLight(0xffe2a8, 1.4, 40, Math.PI / 4.5, 0.5, 1.2)
-  key.position.set(4, 12, 6); key.castShadow = true; key.shadow.mapSize.set(1024, 1024); scene.add(key)
-  const rim = new THREE.PointLight(GOLD, 1.2, 18); rim.position.set(0, 3, -6); scene.add(rim)
+  // ---------------- luci: calde, morbide, da ufficio di sera ----------------
+  scene.add(new THREE.HemisphereLight(0x9aa2b8, 0x0a0a0c, 0.5))
+  const key = new THREE.SpotLight(0xffe6b8, 1.3, 40, Math.PI / 4.2, 0.6, 1.2)
+  key.position.set(3, 13, 6); key.castShadow = true; key.shadow.mapSize.set(1024, 1024); key.shadow.bias = -0.0004; scene.add(key)
+  const fill = new THREE.DirectionalLight(0x8fa6ff, 0.25); fill.position.set(-8, 6, -4); scene.add(fill)
 
+  // ---------------- ambiente ----------------
+  const metal = new THREE.MeshStandardMaterial({ color: 0x15171d, roughness: 0.35, metalness: 0.8, envMap: envTex, envMapIntensity: 0.25 })
+  const walnut = new THREE.MeshStandardMaterial({ color: 0x2b1d14, roughness: 0.55, metalness: 0.05 })
+  const goldMat = new THREE.MeshStandardMaterial({ color: GOLD, roughness: 0.25, metalness: 1, emissive: 0x3a2a05, envMap: envTex, envMapIntensity: 0.8 })
   const fc = document.createElement("canvas"); fc.width = fc.height = 512
   const fg = fc.getContext("2d")!
-  fg.fillStyle = "#0c0d11"; fg.fillRect(0, 0, 512, 512)
-  for (let i = 0; i < 260; i++) {
-    const r = (k: number) => ((Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1 * 512 // venature fisse, niente casualità
-    fg.strokeStyle = `rgba(255,255,255,${(r(9) / 512) * 0.025})`; fg.beginPath(); fg.moveTo(r(1), r(2))
-    fg.bezierCurveTo(r(3), r(4), r(5), r(6), r(7), r(8)); fg.stroke()
+  fg.fillStyle = "#0b0c10"; fg.fillRect(0, 0, 512, 512)
+  for (let i = 0; i < 220; i++) { // venature del marmo fisse (non casuali)
+    const r = (k: number) => (((Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1) + 1) % 1 * 512
+    fg.strokeStyle = `rgba(255,255,255,${(r(9) / 512) * 0.03})`; fg.beginPath(); fg.moveTo(r(1), r(2)); fg.bezierCurveTo(r(3), r(4), r(5), r(6), r(7), r(8)); fg.stroke()
   }
-  fg.strokeStyle = "rgba(232,190,92,.16)"; fg.lineWidth = 2; fg.strokeRect(0, 0, 512, 512)
+  fg.strokeStyle = "rgba(232,190,92,.12)"; fg.lineWidth = 2; fg.strokeRect(0, 0, 512, 512)
   const floorTex = new THREE.CanvasTexture(fc); floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(6, 6)
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(16, 64), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.35, metalness: 0.4 }))
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(16, 72), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.3, metalness: 0.35, envMap: envTex, envMapIntensity: 0.15 }))
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor)
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(9.2, 0.04, 8, 160), new THREE.MeshBasicMaterial({ color: GOLD }))
-  ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; scene.add(ring)
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(9.2, 0.035, 8, 180), goldMat); ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; scene.add(ring)
+  // parete curva alle spalle delle postazioni, con una linea di luce
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 5, 96, 1, true, Math.PI * 0.62, Math.PI * 0.76), new THREE.MeshStandardMaterial({ color: 0x0e0f14, roughness: 0.8, metalness: 0.1, side: THREE.BackSide }))
+  wall.position.y = 2.5; scene.add(wall)
+  const strip = new THREE.Mesh(new THREE.CylinderGeometry(10.95, 10.95, 0.04, 96, 1, true, Math.PI * 0.62, Math.PI * 0.76), new THREE.MeshBasicMaterial({ color: GOLD, side: THREE.BackSide }))
+  strip.position.y = 3.6; scene.add(strip)
+  const wordC = document.createElement("canvas"); wordC.width = 1024; wordC.height = 128
+  const wg = wordC.getContext("2d")!
+  wg.fillStyle = "#e8be5c"; wg.font = "600 64px Georgia, serif"; wg.textAlign = "center"; wg.fillText("WOLF STREET CAPITAL", 512, 84)
+  const wordTex = new THREE.CanvasTexture(wordC); wordTex.encoding = THREE.sRGBEncoding
+  const word = new THREE.Mesh(new THREE.PlaneGeometry(6, 0.75), new THREE.MeshBasicMaterial({ map: wordTex, transparent: true, toneMapped: false }))
+  word.position.set(0, 4.25, -10.6); scene.add(word)
 
   // ---------------- schermi ----------------
-  type Draw = (g: CanvasRenderingContext2D, W: number, H: number, t: number, d: D) => void
+  type Draw = (g: CanvasRenderingContext2D, W: number, H: number, S: SalaState, d: any) => void
   function screen(w: number, h: number, draw: Draw) {
     const c = document.createElement("canvas"); c.width = 512; c.height = Math.round((512 * h) / w)
     const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false, transparent: true }))
-    return { mesh, redraw: (t: number, d: D) => { draw(c.getContext("2d")!, c.width, c.height, t, d); tex.needsUpdate = true } }
+    return { mesh, tex, redraw: (S: SalaState, d: any) => { draw(c.getContext("2d")!, c.width, c.height, S, d); tex.needsUpdate = true } }
   }
   function frame(g: CanvasRenderingContext2D, W: number, H: number, title: string, color: string) {
-    const grd = g.createLinearGradient(0, 0, 0, H); grd.addColorStop(0, "#0d1a2e"); grd.addColorStop(1, "#060b14")
+    const grd = g.createLinearGradient(0, 0, 0, H); grd.addColorStop(0, "#0c1626"); grd.addColorStop(1, "#060a12")
     g.fillStyle = grd; g.fillRect(0, 0, W, H)
     g.fillStyle = color; g.font = "600 22px IBM Plex Mono, monospace"; g.fillText(title, 18, 34)
     g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(18, 46, W - 36, 2)
   }
-  const DRAW: Record<string, Draw> = {
-    ANALISTA: (g, W, H, t, d) => {
-      frame(g, W, H, "ANALISTA · candele 4h", "#7fb8ff")
-      const min = Number(d?.config?.min_score ?? 80)
-      ;(d?.signals ?? []).slice(0, 4).forEach((s: any, i: number) => {
-        const y = 80 + i * 52, sc = Number(s.score ?? 0)
-        g.fillStyle = "#cfd6e6"; g.font = "500 22px IBM Plex Mono, monospace"; g.fillText(String(s.symbol).split("-")[0], 18, y + 18)
-        g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(92, y, 300, 22)
-        const sweep = reduce ? 1 : Math.min(1, (t * 0.4 + i * 0.15) % 1.6)
-        g.fillStyle = s.action === "COMPRA" ? "#4fd394" : s.action === "EVITA" ? "#f06a6a" : "#9aa3b5"; g.fillRect(92, y, (300 * sc / 100) * sweep, 22)
-        g.fillStyle = "#e8be5c"; g.fillRect(92 + (300 * min) / 100, y - 4, 3, 30)
+  function offline(g: CanvasRenderingContext2D, W: number, H: number, S: SalaState) {
+    g.fillStyle = "#07090d"; g.fillRect(0, 50, W, H - 50)
+    g.fillStyle = "#8a8f9a"; g.font = "600 30px IBM Plex Mono, monospace"; g.fillText("NON CONNESSO", 18, 120)
+    g.font = "400 18px IBM Plex Mono, monospace"; g.fillText(S.reason.slice(0, 40), 18, 156)
+  }
+  const roleLine = (g: CanvasRenderingContext2D, S: SalaState, id: RoleId, y: number) => {
+    const e = S.roles[id].turnEntries[0]
+    g.fillStyle = "#9aa3b5"; g.font = "400 16px IBM Plex Mono, monospace"
+    g.fillText((e ? e.text : "nessuna voce in questo turno").slice(0, 44), 18, y)
+  }
+  const DRAW: Record<RoleId, Draw> = {
+    ANALISTA: (g, W, H, S, d) => {
+      frame(g, W, H, "ANALISTA · candele 4h", "#6fa8ff"); if (!S.connected) return offline(g, W, H, S)
+      const min = Number(d?.config?.min_score), sigs = (d?.signals ?? []).slice(0, 4)
+      if (!sigs.length) { g.fillStyle = "#9aa3b5"; g.font = "400 20px IBM Plex Mono, monospace"; g.fillText("nessuna analisi in questo turno", 18, 100); return }
+      sigs.forEach((s: any, i: number) => {
+        const y = 70 + i * 46, sc = Number(s.score ?? 0)
+        g.fillStyle = "#cfd6e6"; g.font = "500 21px IBM Plex Mono, monospace"; g.fillText(String(s.symbol).split("-")[0], 18, y + 18)
+        g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(92, y, 300, 20)
+        g.fillStyle = s.action === "COMPRA" ? "#45c98a" : s.action === "EVITA" ? "#e46a6a" : "#9aa3b5"; g.fillRect(92, y, (300 * Math.max(0, Math.min(100, sc))) / 100, 20)
+        if (Number.isFinite(min)) { g.fillStyle = "#e8be5c"; g.fillRect(92 + (300 * min) / 100, y - 4, 3, 28) }
         g.fillStyle = "#ece6d6"; g.fillText(String(sc), 408, y + 18)
       })
-      if (!(d?.signals ?? []).length) { g.fillStyle = "#9aa3b5"; g.font = "400 20px IBM Plex Mono, monospace"; g.fillText("in attesa del primo turno", 18, 100) }
+      roleLine(g, S, "ANALISTA", H - 14)
     },
-    RISK: (g, W, H, t, d) => {
-      frame(g, W, H, "RISK · limiti", "#ff9b6a")
+    RISK: (g, W, H, S, d) => {
+      frame(g, W, H, "RISK · limiti", "#ff8a5c"); if (!S.connected) return offline(g, W, H, S)
       const c = d?.config ?? {}, k = d?.kpi ?? {}, npos = (d?.positions ?? []).length
-      const dd = Number(k.max_dd_pct ?? 0), ddLim = Number(c.max_drawdown_pct ?? 15)
-      const dayLoss = Math.max(0, -Number(k.pnl_today ?? 0)), weekLoss = Math.max(0, -Number(k.pnl_week ?? 0))
-      const rows: [string, string, number][] = [
-        ["rischio/op.", `${fmt(c.risk_per_trade_eur, 2)} €`, 0.3],
-        ["perso oggi", `${fmt(dayLoss, 2)}/${fmt(c.daily_loss_limit_eur)} €`, dayLoss / Math.max(0.01, Number(c.daily_loss_limit_eur ?? 1))],
-        ["perso sett.", `${fmt(weekLoss, 2)}/${fmt(c.weekly_loss_limit_eur)} €`, weekLoss / Math.max(0.01, Number(c.weekly_loss_limit_eur ?? 1))],
-        ["calo", `${fmt(dd, 2)}%`, dd / ddLim],
-        ["posizioni", `${npos}/${c.max_open_positions ?? 2}`, npos / Number(c.max_open_positions ?? 2)],
+      const rows: [string, string, number | null][] = [
+        ["perso oggi", `${fmt(Math.max(0, -Number(k.pnl_today ?? NaN)), 2)} / ${fmt(c.daily_loss_limit_eur)} €`, Number(c.daily_loss_limit_eur) ? Math.max(0, -Number(k.pnl_today ?? 0)) / Number(c.daily_loss_limit_eur) : null],
+        ["perso sett.", `${fmt(Math.max(0, -Number(k.pnl_week ?? NaN)), 2)} / ${fmt(c.weekly_loss_limit_eur)} €`, Number(c.weekly_loss_limit_eur) ? Math.max(0, -Number(k.pnl_week ?? 0)) / Number(c.weekly_loss_limit_eur) : null],
+        ["calo", `${fmt(k.max_dd_pct, 2)} / ${fmt(c.max_drawdown_pct)} %`, Number(c.max_drawdown_pct) ? Number(k.max_dd_pct ?? 0) / Number(c.max_drawdown_pct) : null],
+        ["posizioni", `${npos} / ${c.max_open_positions ?? "—"}`, Number(c.max_open_positions) ? npos / Number(c.max_open_positions) : null],
       ]
       rows.forEach(([lab, v, f], i) => {
-        const y = 78 + i * 42
-        g.fillStyle = "#9aa3b5"; g.font = "400 19px IBM Plex Mono, monospace"; g.fillText(lab, 18, y + 16)
-        g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(190, y + 2, 170, 16)
-        g.fillStyle = f > 0.7 ? "#f06a6a" : "#4fd394"; g.fillRect(190, y + 2, Math.max(4, 170 * Math.min(1, f)), 16)
-        g.fillStyle = "#ece6d6"; g.fillText(v, 372, y + 16)
+        const y = 66 + i * 40
+        g.fillStyle = "#9aa3b5"; g.font = "400 18px IBM Plex Mono, monospace"; g.fillText(lab, 18, y + 15)
+        g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(170, y + 2, 150, 15)
+        if (f !== null) { g.fillStyle = f > 0.7 ? "#e46a6a" : "#45c98a"; g.fillRect(170, y + 2, Math.max(3, 150 * Math.min(1, f)), 15) }
+        g.fillStyle = "#ece6d6"; g.fillText(v, 332, y + 15)
       })
-      const ok = !d?.paused && !d?.kill_switch
-      g.fillStyle = ok ? (Math.sin(t * 3) > 0 || reduce ? "#4fd394" : "#2b6e4f") : "#f06a6a"
-      g.font = "600 20px IBM Plex Mono, monospace"; g.fillText(ok ? "● TUTTO NEI LIMITI" : "● IN PAUSA", 18, H - 18)
+      roleLine(g, S, "RISK", H - 14)
     },
-    TRADER: (g, W, H, t, d) => {
-      const p = (d?.positions ?? [])[0], btc = (d?.signals ?? []).find((s: any) => s.symbol === "BTC-EUR")
-      frame(g, W, H, p ? `TRADER · ${String(p.symbol).replace("-", "/")}` : "TRADER · nessuna posizione", "#4fd394")
-      const price = Number(p?.price ?? btc?.live_price ?? btc?.price)
-      g.fillStyle = "#ece6d6"; g.font = "600 46px IBM Plex Mono, monospace"; g.fillText(`${fmt(price)} €`, 18, 110)
-      if (!p) { g.fillStyle = "#9aa3b5"; g.font = "400 20px IBM Plex Mono, monospace"; g.fillText("attendo un segnale pulito", 18, 150); return }
-      const pct = Number(p.pnl_pct ?? 0)
-      g.fillStyle = pct >= 0 ? "#4fd394" : "#f06a6a"; g.font = "500 22px IBM Plex Mono, monospace"
-      g.fillText(`${pct >= 0 ? "+" : ""}${fmt(pct, 2)}% · ${pct >= 0 ? "+" : ""}${fmt(p.pnl, 2)} €`, 18, 144)
-      const x0 = 18, x1 = W - 18, y = 200, span = p.tp - p.stop || 1
-      const at = (v: number) => x0 + ((x1 - x0) * Math.max(0, Math.min(1, (v - p.stop) / span)))
-      g.fillStyle = "rgba(240,106,106,.35)"; g.fillRect(x0, y, at(p.entry) - x0, 14)
-      g.fillStyle = "rgba(79,211,148,.35)"; g.fillRect(at(p.entry), y, x1 - at(p.entry), 14)
-      g.fillStyle = "#e8be5c"; g.fillRect(at(p.entry) - 1, y - 8, 3, 30)
-      g.fillStyle = "#ffffff"; g.beginPath(); g.arc(at(price), y + 7, 9 + (reduce ? 0 : Math.sin(t * 4) * 2), 0, 7); g.fill()
-      g.font = "400 17px IBM Plex Mono, monospace"; g.fillStyle = "#f06a6a"; g.fillText(`stop ${fmt(p.stop)}`, x0, y + 44)
-      g.fillStyle = "#4fd394"; const tl = `target ${fmt(p.tp)}`; g.fillText(tl, x1 - g.measureText(tl).width, y + 44)
+    TRADER: (g, W, H, S, d) => {
+      const p = (d?.positions ?? [])[0]
+      frame(g, W, H, p ? `TRADER · ${String(p.symbol).replace("-", "/")}` : "TRADER · nessuna posizione", "#45c98a"); if (!S.connected) return offline(g, W, H, S)
+      if (!p) { roleLine(g, S, "TRADER", 100); return }
+      g.fillStyle = "#ece6d6"; g.font = "600 42px IBM Plex Mono, monospace"; g.fillText(`${fmt(p.price)} €`, 18, 100)
+      const pct = Number(p.pnl_pct)
+      g.fillStyle = pct >= 0 ? "#45c98a" : "#e46a6a"; g.font = "500 20px IBM Plex Mono, monospace"
+      g.fillText(`${pct >= 0 ? "+" : ""}${fmt(pct, 2)}% · ${Number(p.pnl) >= 0 ? "+" : ""}${fmt(p.pnl, 2)} €`, 18, 132)
+      const x0 = 18, x1 = W - 18, y = 168, span = p.tp - p.stop || 1
+      const at = (v: number) => x0 + (x1 - x0) * Math.max(0, Math.min(1, (v - p.stop) / span))
+      g.fillStyle = "rgba(228,106,106,.35)"; g.fillRect(x0, y, at(p.entry) - x0, 12)
+      g.fillStyle = "rgba(69,201,138,.35)"; g.fillRect(at(p.entry), y, x1 - at(p.entry), 12)
+      g.fillStyle = "#e8be5c"; g.fillRect(at(p.entry) - 1, y - 6, 3, 24)
+      g.fillStyle = "#ffffff"; g.beginPath(); g.arc(at(Number(p.price)), y + 6, 8, 0, 7); g.fill()
+      g.font = "400 16px IBM Plex Mono, monospace"; g.fillStyle = "#e46a6a"; g.fillText(`stop ${fmt(p.stop)}`, x0, y + 38)
+      g.fillStyle = "#45c98a"; const tl = `target ${fmt(p.tp)}`; g.fillText(tl, x1 - g.measureText(tl).width, y + 38)
+      roleLine(g, S, "TRADER", H - 14)
     },
-    SISTEMA: (g, W, H, _t, d) => {
-      frame(g, W, H, "SISTEMA · Revolut X", "#e8be5c")
-      const live = String(d?.mode) === "live"
-      g.fillStyle = live ? "#e8be5c" : "#9aa3b5"; g.font = "700 34px IBM Plex Mono, monospace"
-      g.fillText(d?.kill_switch ? "KILL SWITCH" : live ? "LIVE · ARMATO" : String(d?.mode ?? "—").toUpperCase(), 18, 104)
-      const s = secondsToNextTurn()
-      g.fillStyle = "#ece6d6"; g.font = "500 24px IBM Plex Mono, monospace"; g.fillText(`prossimo turno ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, 18, 150)
-      g.fillStyle = "#9aa3b5"; g.font = "400 19px IBM Plex Mono, monospace"
-      g.fillText(`patrimonio ${fmt(d?.kpi?.equity, 2)} €`, 18, 192)
-      g.fillText(`liquidità  ${fmt(d?.balances?.EUR?.available ?? d?.kpi?.cash, 2)} €`, 18, 222)
-      g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(18, 244, W - 36, 10)
-      g.fillStyle = "#e8be5c"; g.fillRect(18, 244, (W - 36) * (1 - s / 1800), 10)
+    SISTEMA: (g, W, H, S, d) => {
+      frame(g, W, H, "SISTEMA · Revolut X", "#e8be5c"); if (!S.connected) return offline(g, W, H, S)
+      g.fillStyle = S.liveConfirmed ? "#e8be5c" : "#cfd6e6"; g.font = "700 30px IBM Plex Mono, monospace"; g.fillText(S.modeLabel, 18, 96)
+      g.fillStyle = "#ece6d6"; g.font = "500 21px IBM Plex Mono, monospace"; g.fillText(`prossimo turno ${fmtWait(S.nextInS)}`, 18, 136)
+      g.fillStyle = "#9aa3b5"; g.font = "400 18px IBM Plex Mono, monospace"
+      g.fillText(`patrimonio ${fmt(d?.kpi?.equity, 2)} €`, 18, 170)
+      g.fillText(`liquidità  ${fmt(d?.balances?.EUR?.available ?? d?.kpi?.cash, 2)} €`, 18, 196)
+      roleLine(g, S, "SISTEMA", H - 14)
     },
   }
 
-  // ---------------- postazioni e bot ----------------
+  // ---------------- postazioni ----------------
   const R = 6.2
-  const metal = new THREE.MeshStandardMaterial({ color: 0x15171d, roughness: 0.3, metalness: 0.85 })
-  const goldMat = new THREE.MeshStandardMaterial({ color: GOLD, roughness: 0.25, metalness: 1, emissive: 0x3a2a05 })
   const stations = ROLES.map((r) => {
     const g = new THREE.Group()
     const x = Math.sin(r.angle) * R, z = -Math.cos(r.angle) * R
     g.position.set(x, 0, z); g.lookAt(0, 0, 0)
-    const desk = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 1.4), metal); desk.position.set(0, 1.05, 0); desk.castShadow = desk.receiveShadow = true; g.add(desk)
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(3.22, 0.03, 0.03), goldMat); edge.position.set(0, 1.11, 0.7); g.add(edge)
-    ;[-1.4, 1.4].forEach((lx) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1, 1.2), metal); leg.position.set(lx, 0.5, 0); leg.castShadow = true; g.add(leg) })
-    const scr = screen(2.4, 1.35, DRAW[r.id]); scr.mesh.position.set(0, 2.05, -0.45); scr.mesh.rotation.x = -0.08; g.add(scr.mesh)
-    const bezel = new THREE.Mesh(new THREE.BoxGeometry(2.52, 1.47, 0.06), metal); bezel.position.set(0, 2.05, -0.49); bezel.rotation.x = -0.08; g.add(bezel)
-    const glow = new THREE.PointLight(r.color, 0.7, 4); glow.position.set(0, 2, 0.3); g.add(glow)
+    const top = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 1.4), walnut); top.position.set(0, 1.05, 0); top.castShadow = top.receiveShadow = true; g.add(top)
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(3.22, 0.025, 0.025), goldMat); edge.position.set(0, 1.08, 0.7); g.add(edge)
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.95, 0.08), metal); body.position.set(0, 0.55, -0.6); body.castShadow = true; g.add(body)
+    ;[-1.45, 1.45].forEach((lx) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.0, 1.25), metal); leg.position.set(lx, 0.52, 0); leg.castShadow = true; g.add(leg) })
+    const kb = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.03, 0.3), new THREE.MeshStandardMaterial({ color: 0x101115, roughness: 0.5 })); kb.position.set(0, 1.105, 0.2); g.add(kb)
+    const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.12, 0.45, 16), metal); stand.position.set(0, 1.3, -0.45); g.add(stand)
+    const scr = screen(2.4, 1.35, DRAW[r.id]); scr.mesh.position.set(0, 2.15, -0.42); scr.mesh.rotation.x = -0.06; g.add(scr.mesh)
+    const bezel = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.45, 0.05), metal); bezel.position.set(0, 2.15, -0.46); bezel.rotation.x = -0.06; g.add(bezel)
+    // targhetta del ruolo sul bordo della scrivania
+    const pc = document.createElement("canvas"); pc.width = 512; pc.height = 64
+    const pg = pc.getContext("2d")!; pg.fillStyle = "#0c0d11"; pg.fillRect(0, 0, 512, 64); pg.fillStyle = css(r.color); pg.fillRect(0, 0, 8, 64)
+    pg.fillStyle = "#ece6d6"; pg.font = "600 34px IBM Plex Mono, monospace"; pg.fillText(r.id, 28, 44)
+    const plateTex = new THREE.CanvasTexture(pc); plateTex.encoding = THREE.sRGBEncoding
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.175), new THREE.MeshBasicMaterial({ map: plateTex, toneMapped: false })); plate.position.set(0, 0.92, 0.705); g.add(plate)
+    const deskLight = new THREE.PointLight(r.color, 0.6, 4.5); deskLight.position.set(0, 2.1, 0.4); g.add(deskLight)
+    const pad = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.68, 48), new THREE.MeshBasicMaterial({ color: r.color, transparent: true, opacity: 0.4, side: THREE.DoubleSide }))
+    pad.rotation.x = -Math.PI / 2; pad.position.set(0, 0.015, 1.36); g.add(pad)
     scene.add(g)
-    return { ...r, group: g, screen: scr, seat: new THREE.Vector3(x * 0.78, 0, z * 0.78) }
+    return { ...r, group: g, screen: scr, deskLight, pad, seat: new THREE.Vector3(x * 0.78, 0, z * 0.78) }
   })
 
-  function makeBot(color: number) {
-    const b = new THREE.Group()
-    const white = new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.35, metalness: 0.2 })
-    const dark = new THREE.MeshStandardMaterial({ color: 0x0b0c10, roughness: 0.2, metalness: 0.6 })
-    const accent = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.2 })
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.95, 24), white); body.position.y = 1.0; body.castShadow = true; b.add(body)
-    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.035, 8, 32), accent); belt.rotation.x = Math.PI / 2; belt.position.y = 0.78; b.add(belt)
-    const head = new THREE.Group(); head.position.y = 1.85; b.add(head)
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.42, 32, 24), white); skull.castShadow = true; head.add(skull)
-    const eyes = [-0.12, 0.12].map((ex) => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), accent); e.position.set(ex, 0.03, 0.4); head.add(e); return e })
-    ;[-0.43, 0.43].forEach((ex) => { const e = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.06, 16), accent); e.rotation.z = Math.PI / 2; e.position.x = ex; head.add(e) })
-    const arms = [-0.55, 0.55].map((ax) => {
-      const a = new THREE.Group(); a.position.set(ax, 1.3, 0)
-      const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.5, 6, 12), white); m.position.y = -0.3; m.castShadow = true; a.add(m); b.add(a); return a
-    })
-    const legs = [-0.2, 0.2].map((lx) => { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.5, 12), dark); l.position.set(lx, 0.27, 0); b.add(l); return l })
-    const halo = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.62, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, side: THREE.DoubleSide }))
-    halo.rotation.x = -Math.PI / 2; halo.position.y = 0.02; b.add(halo)
-    return { root: b, head, eyes, arms, legs, halo }
+  // ---------------- persone (o figure semplici se il modello non arriva) ----------------
+  type Person = {
+    st: (typeof stations)[number]; root: THREE.Object3D; joints: THREE.MeshStandardMaterial[]
+    pos: THREE.Vector3; target: THREE.Vector3; heading: number; tag: HTMLDivElement
+    mixer?: THREE.AnimationMixer; idle?: THREE.AnimationAction; walk?: THREE.AnimationAction
+    agree?: THREE.AnimationAction; shake?: THREE.AnimationAction; walking: boolean; sayUntil: number; say: string; pulse: number
   }
-
-  const bots = stations.map((s) => {
-    const m = makeBot(s.color); m.root.position.copy(s.seat); scene.add(m.root)
-    const tag = document.createElement("div"); tag.className = "sala-tag"; tag.innerHTML = `${s.id}<i></i>`; tagsEl.appendChild(tag)
-    return { st: s, m, tag, pos: s.seat.clone(), target: s.seat.clone(), walk: 0, sayT: 0, typing: 0 }
+  const people: Person[] = stations.map((s) => {
+    const root = new THREE.Group()
+    const jointMat = new THREE.MeshStandardMaterial({ color: s.color, emissive: s.color, emissiveIntensity: 0.2, metalness: 0.8, roughness: 0.3 })
+    const suit = new THREE.MeshStandardMaterial({ color: s.suit, roughness: 0.6, metalness: 0.1 })
+    const bodyM = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 1.1, 20), suit); bodyM.position.y = 1.0; bodyM.castShadow = true; root.add(bodyM)
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 24, 16), suit); head.position.y = 1.75; root.add(head)
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.02, 8, 32), jointMat); band.rotation.x = Math.PI / 2; band.position.y = 1.45; root.add(band)
+    root.position.copy(s.seat); scene.add(root)
+    const tag = document.createElement("div"); tag.className = "sala-tag"; tag.innerHTML = `<b></b><i></i>`; tagsEl.appendChild(tag)
+    return { st: s, root, joints: [jointMat], pos: s.seat.clone(), target: s.seat.clone(), heading: 0, tag, walking: false, sayUntil: 0, say: "", pulse: 0 }
   })
-  const B = Object.fromEntries(bots.map((b) => [b.st.id, b]))
+  const byId = Object.fromEntries(people.map((p) => [p.st.id, p])) as Record<RoleId, Person>
 
-  // persone: stesso modello per tutti, abito scuro e dettagli nel colore del ruolo
-  type Human = { model: THREE.Object3D; mixer: THREE.AnimationMixer; idle: THREE.AnimationAction; walk: THREE.AnimationAction; agree?: THREE.AnimationAction; shake?: THREE.AnimationAction; walking: boolean }
-  const humans = new Map<string, Human>()
   let disposed = false
   new GLTFLoader().load(HUMAN_URL, (gltf) => {
     if (disposed) return
-    const clips = gltf.animations
-    const clip = (n: string) => clips.find((c) => c.name === n)
+    const clip = (n: string) => gltf.animations.find((c) => c.name === n)
     const additive = (n: string) => {
       const c = clip(n); if (!c) return undefined
-      const cc = c.clone(); THREE.AnimationUtils.makeClipAdditive(cc); return THREE.AnimationUtils.subclip(cc, n, 2, Math.max(3, Math.round(cc.duration * 30)), 30)
+      const cc = c.clone(); THREE.AnimationUtils.makeClipAdditive(cc)
+      return THREE.AnimationUtils.subclip(cc, n, 2, Math.max(3, Math.round(cc.duration * 30)), 30)
     }
     const agreeClip = additive("agree"), shakeClip = additive("headShake")
-    bots.forEach((b) => {
+    people.forEach((p) => {
       const model = SkeletonUtils.clone(gltf.scene)
+      const joints: THREE.MeshStandardMaterial[] = []
       model.traverse((o: any) => {
         if (!o.isMesh) return
         o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false
-        const joints = /joint/i.test(o.material?.name ?? "")
-        o.material = new THREE.MeshStandardMaterial(joints
-          ? { color: b.st.color, emissive: b.st.color, emissiveIntensity: 0.45, metalness: 0.9, roughness: 0.22, envMap: envTex, envMapIntensity: 0.9 }
-          : { color: 0x16181e, metalness: 0.1, roughness: 0.6 })
+        if (/joint/i.test(o.material?.name ?? "")) {
+          const m = new THREE.MeshStandardMaterial({ color: p.st.color, emissive: p.st.color, emissiveIntensity: 0.2, metalness: 0.85, roughness: 0.25, envMap: envTex, envMapIntensity: 0.8 })
+          joints.push(m); o.material = m
+        } else o.material = new THREE.MeshStandardMaterial({ color: p.st.suit, metalness: 0.1, roughness: 0.6 })
       })
-      model.position.copy(b.pos); model.scale.setScalar(1.06); scene.add(model)
+      model.scale.setScalar(1.06); model.position.copy(p.pos); model.rotation.y = p.root.rotation.y
+      scene.remove(p.root); scene.add(model); p.root = model; p.joints = joints
       const mixer = new THREE.AnimationMixer(model)
       const idle = mixer.clipAction(clip("idle")!), walk = mixer.clipAction(clip("walk")!)
       idle.play(); walk.play(); walk.setEffectiveWeight(0)
-      idle.time = Math.random() * idle.getClip().duration // respiro sfalsato, non tutti uguali
       const mk = (c?: THREE.AnimationClip) => {
         if (!c) return undefined
-        const a = mixer.clipAction(c); a.blendMode = THREE.AdditiveAnimationBlendMode; a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = false; return a
+        const a = mixer.clipAction(c); a.blendMode = THREE.AdditiveAnimationBlendMode; a.setLoop(THREE.LoopOnce, 1); return a
       }
-      humans.set(b.st.id, { model, mixer, idle, walk, agree: mk(agreeClip), shake: mk(shakeClip), walking: false })
-      b.m.root.visible = false
+      Object.assign(p, { mixer, idle, walk, agree: mk(agreeClip), shake: mk(shakeClip) })
     })
-  }, undefined, () => { /* se il modello non arriva restano i robot */ })
-  const gesture = (id: string, kind: "agree" | "shake") => {
-    const h = humans.get(id); const a = kind === "agree" ? h?.agree : h?.shake
-    if (a && !reduce) { a.reset(); a.setEffectiveWeight(1); a.play() }
-  }
+  }, undefined, () => { /* senza modello restano le figure semplici, ferme */ })
 
-  // ologramma centrale
+  // ---------------- ologramma centrale: curva vera del patrimonio ----------------
   const holo = new THREE.Group(); holo.position.y = 2.2; scene.add(holo)
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 0.25, 48), metal); base.position.y = -2.08; holo.add(base)
-  const baseGlow = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.03, 8, 80), goldMat); baseGlow.rotation.x = Math.PI / 2; baseGlow.position.y = -1.95; holo.add(baseGlow)
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 3.2, 48, 1, true), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.05, side: THREE.DoubleSide })); beam.position.y = -0.3; holo.add(beam)
-  const candles = new THREE.Group(); holo.add(candles)
-  for (let i = 0; i < 28; i++) {
-    const a = (i / 28) * Math.PI * 2, h = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(i * 1.7) * Math.cos(i * 0.45))
-    const c = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.1), new THREE.MeshBasicMaterial({ color: Math.sin(i * 2.3) > -0.2 ? 0x4fd394 : 0xf06a6a, transparent: true, opacity: 0.85 }))
-    c.position.set(Math.cos(a) * 1.05, Math.sin(i * 0.6) * 0.35, Math.sin(a) * 1.05); candles.add(c)
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 0.22, 48), metal); base.position.y = -2.09; holo.add(base)
+  const baseGlow = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.025, 8, 80), goldMat); baseGlow.rotation.x = Math.PI / 2; baseGlow.position.y = -1.97; holo.add(baseGlow)
+  const beamMat = new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.045, side: THREE.DoubleSide })
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 3.0, 48, 1, true), beamMat); beam.position.y = -0.4; holo.add(beam)
+  const bars = new THREE.Group(); holo.add(bars)
+  function buildBars(d: any) {
+    bars.children.forEach((c: any) => { c.geometry.dispose(); c.material.dispose() }); bars.clear()
+    const eq: number[] = (Array.isArray(d?.equity) ? d.equity : []).map((x: any) => Number(x?.[1])).filter(Number.isFinite).slice(-36)
+    if (eq.length < 2) return
+    const lo = Math.min(...eq), hi = Math.max(...eq), span = hi - lo || 1, first = eq[0]
+    eq.forEach((v, i) => {
+      const a = (i / eq.length) * Math.PI * 2, h = 0.15 + ((v - lo) / span) * 0.9
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, h, 0.08), new THREE.MeshBasicMaterial({ color: v >= first ? 0x45c98a : 0xe46a6a, transparent: true, opacity: 0.8 }))
+      m.position.set(Math.cos(a) * 1.05, -0.9 + h / 2, Math.sin(a) * 1.05); bars.add(m)
+    })
   }
-  const priceTag = screen(2.2, 0.55, (g, W, H, _t, d) => {
-    g.clearRect(0, 0, W, H); g.fillStyle = "rgba(8,10,14,.75)"; g.fillRect(0, 0, W, H)
+  const priceTag = screen(2.4, 0.6, (g, W, H, S, d) => {
+    g.clearRect(0, 0, W, H); g.fillStyle = "rgba(8,10,14,.8)"; g.fillRect(0, 0, W, H)
     const btc = (d?.signals ?? []).find((s: any) => s.symbol === "BTC-EUR")
-    g.fillStyle = "#e8be5c"; g.font = "700 46px IBM Plex Mono, monospace"
-    const txt = `BTC ${fmt(btc?.live_price ?? btc?.price)} €`; g.fillText(txt, (W - g.measureText(txt).width) / 2, 82)
+    const px = Number(btc?.live_price ?? btc?.price)
+    g.fillStyle = S.connected ? "#e8be5c" : "#8a8f9a"; g.font = "700 40px IBM Plex Mono, monospace"
+    const t = S.connected && Number.isFinite(px) ? `BTC ${fmt(px)} €` : "NON CONNESSO"
+    g.fillText(t, (W - g.measureText(t).width) / 2, 58)
+    g.font = "400 18px IBM Plex Mono, monospace"; g.fillStyle = "#9aa3b5"
+    const sub = S.connected ? `patrimonio · ultimi ${Math.min(36, (d?.equity ?? []).length)} turni` : S.reason
+    g.fillText(sub, (W - g.measureText(sub).width) / 2, 94)
   })
-  priceTag.mesh.position.y = 1.0; holo.add(priceTag.mesh)
+  priceTag.mesh.position.y = 1.05; holo.add(priceTag.mesh)
 
-  // pacchetti di dati tra i bot
-  const packets: { mesh: THREE.Mesh; from: any; to: any; t: number }[] = []
-  const pGeo = new THREE.SphereGeometry(0.11, 16, 12)
-  function sendPacket(from: any, to: any, color: number) {
-    const mesh = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color })); mesh.add(new THREE.PointLight(color, 1, 3)); scene.add(mesh)
+  // ---------------- passaggi di dati: solo quando arriva un turno vero ----------------
+  const packets: { mesh: THREE.Mesh; from: Person; to: Person; t: number }[] = []
+  const pGeo = new THREE.SphereGeometry(0.09, 16, 12)
+  const headPos = (p: Person) => p.pos.clone().add(new THREE.Vector3(0, 2.15, 0))
+  function sendPacket(from: Person, to: Person) {
+    if (reduce) return
+    const mesh = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: from.st.color })); scene.add(mesh)
     packets.push({ mesh, from, to, t: 0 })
   }
-  const headPos = (b: any) => b.pos.clone().add(new THREE.Vector3(0, 2.2, 0))
-
-  // ciclo del turno: Analista → Risk → Trader (ologramma) → Sistema
-  let phase = -1, phaseT = 0
-  const speak = (b: any) => { b.sayT = 3.4 }
-  function nextPhase() {
-    phase = (phase + 1) % 6; phaseT = 0
-    const A = B.ANALISTA, K = B.RISK, T = B.TRADER, S = B.SISTEMA
-    if (phase === 0) { speak(A); A.typing = 2.5; if ((getData()?.signals ?? []).some((x: any) => x.action === "EVITA")) setTimeout(() => gesture("ANALISTA", "shake"), 900) }
-    if (phase === 1) { sendPacket(A, K, 0x7fb8ff) }
-    if (phase === 2) { speak(K); K.typing = 1.5; gesture("RISK", "agree"); sendPacket(K, T, 0xff9b6a) }
-    if (phase === 3) { speak(T); T.target.set(Math.sin(0.8) * 2.3, 0, -Math.cos(0.8) * 2.3) }
-    if (phase === 4) { T.target.copy(T.st.seat); sendPacket(T, S, 0x4fd394) }
-    if (phase === 5) { speak(S); S.typing = 2; gesture("SISTEMA", "agree") }
+  const gesture = (p: Person, kind: "agree" | "shake") => {
+    const a = kind === "agree" ? p.agree : p.shake
+    if (a && !reduce) { a.reset(); a.setEffectiveWeight(1); a.play() }
+  }
+  const timers: number[] = []
+  const later = (ms: number, fn: () => void) => { timers.push(window.setTimeout(() => { if (!disposed) fn() }, ms)) }
+  const pick = (S: SalaState, id: RoleId) => {
+    const es = S.roles[id].turnEntries
+    return (es.find((e) => e.level === "trade" || e.level === "error" || e.level === "warn") ?? es[0])?.text ?? ""
+  }
+  /** Racconta il turno appena arrivato, nell'ordine reale del lavoro, solo con i ruoli che hanno scritto qualcosa. */
+  function playTurn(S: SalaState) {
+    const order = (["ANALISTA", "RISK", "TRADER", "SISTEMA"] as RoleId[]).filter((id) => S.roles[id].turnEntries.length)
+    let prev: Person | null = null
+    order.forEach((id, i) => {
+      const p = byId[id]
+      later(i * 1600, () => {
+        const now = performance.now()
+        p.say = pick(S, id); p.sayUntil = now + 6000; p.pulse = now
+        if (prev) sendPacket(prev, p)
+        if (id === "ANALISTA") { if (S.events.buySignal) gesture(p, "agree"); else if (S.events.avoidOnly) gesture(p, "shake") }
+        if (id === "RISK" && S.events.riskBlock) gesture(p, "shake")
+        if (id === "TRADER" && (S.events.trade || S.events.sold)) {
+          p.target.set(Math.sin(p.st.angle) * 2.4, 0, -Math.cos(p.st.angle) * 2.4)
+          later(4200, () => p.target.copy(p.st.seat))
+        }
+        if (id === "SISTEMA") gesture(p, S.events.errors ? "shake" : "agree")
+        prev = p
+      })
+      prev = p
+    })
   }
 
-  // camera e controlli
-  const views = [{ yaw: 0, pitch: 0.5, dist: 13 }, { yaw: 0.9, pitch: 0.25, dist: 11 }, { yaw: -1.2, pitch: 0.6, dist: 13 }, { yaw: Math.PI, pitch: 0.35, dist: 14 }]
-  let vi = 0, fit = 1, idle = 0, dragging = false, last: [number, number] = [0, 0], pinch: number | null = null
+  // ---------------- camera e controlli ----------------
+  const views = [{ yaw: 0, pitch: 0.5, dist: 13 }, { yaw: 0.9, pitch: 0.28, dist: 10 }, { yaw: -1.2, pitch: 0.6, dist: 12 }, { yaw: Math.PI, pitch: 0.4, dist: 13 }]
+  let vi = 0, fit = 1, idleT = 0, dragging = false, last: [number, number] = [0, 0], pinch: number | null = null
   const cam = { ...views[0] }, goal = { ...views[0] }
-  const onDown = (e: PointerEvent) => { dragging = true; last = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); idle = 0 }
+  const onDown = (e: PointerEvent) => { dragging = true; last = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); idleT = 0 }
   const onMove = (e: PointerEvent) => {
     if (!dragging) return
-    goal.yaw -= (e.clientX - last[0]) * 0.006; goal.pitch = Math.min(1.25, Math.max(0.1, goal.pitch + (e.clientY - last[1]) * 0.004)); last = [e.clientX, e.clientY]
+    goal.yaw -= (e.clientX - last[0]) * 0.006; goal.pitch = Math.min(1.25, Math.max(0.12, goal.pitch + (e.clientY - last[1]) * 0.004)); last = [e.clientX, e.clientY]
   }
   const onUp = () => { dragging = false }
-  const onWheel = (e: WheelEvent) => { e.preventDefault(); goal.dist = Math.min(24, Math.max(7, goal.dist + e.deltaY * 0.01)); idle = 0 }
+  const onWheel = (e: WheelEvent) => { e.preventDefault(); goal.dist = Math.min(22, Math.max(6, goal.dist + e.deltaY * 0.01)); idleT = 0 }
   const onTouch = (e: TouchEvent) => {
     if (e.touches.length !== 2) return
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
-    if (pinch) goal.dist = Math.min(24, Math.max(7, (goal.dist * pinch) / d)); pinch = d
+    if (pinch) goal.dist = Math.min(22, Math.max(6, (goal.dist * pinch) / d)); pinch = d
   }
   const onTouchEnd = () => { pinch = null }
+  const nextView = () => { vi = (vi + 1) % views.length; Object.assign(goal, views[vi]); idleT = 0 }
   canvas.addEventListener("pointerdown", onDown); canvas.addEventListener("pointermove", onMove); canvas.addEventListener("pointerup", onUp)
   canvas.addEventListener("wheel", onWheel, { passive: false }); canvas.addEventListener("touchmove", onTouch, { passive: true }); canvas.addEventListener("touchend", onTouchEnd)
-  const nextView = () => { vi = (vi + 1) % views.length; Object.assign(goal, views[vi]); idle = 0 }
   canvas.addEventListener("dblclick", nextView)
-
   function resize() {
     const r = canvas.getBoundingClientRect()
     renderer.setSize(r.width, r.height, false); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix()
-    fit = camera.aspect < 1.2 ? Math.min(2.4, 1.25 / camera.aspect) : 1
+    fit = camera.aspect < 1.2 ? Math.min(2.4, 1.3 / camera.aspect) : 1
   }
   const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
 
+  // ---------------- ciclo ----------------
   const clock = new THREE.Clock()
-  let screenT = 0, raf = 0
-  const data0 = getData()
-  stations.forEach((s) => s.screen.redraw(0, data0)); priceTag.redraw(0, data0)
-  nextPhase()
+  let raf = 0, screenT = 1, lastTurn: number | null = null, S = salaState(getData(), Date.now() / 1000)
+  function refresh(d: any) {
+    S = salaState(d, Date.now() / 1000)
+    stations.forEach((s) => s.screen.redraw(S, d)); priceTag.redraw(S, d)
+    if (S.turnAt !== lastTurn) {
+      const first = lastTurn === null
+      lastTurn = S.turnAt; buildBars(S.connected ? d : null)
+      // all'apertura racconta il turno solo se è appena avvenuto; poi ogni turno nuovo
+      if (S.connected && (!first || (S.ageS ?? 1e9) < 300)) playTurn(S)
+    }
+  }
+  refresh(getData())
   function tick() {
-    const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime, d = getData()
-    idle += dt; if (!dragging && idle > 6 && !reduce) goal.yaw += dt * 0.06
+    const dt = Math.min(clock.getDelta(), 0.05), now = performance.now(), d = getData()
+    screenT += dt; if (screenT > 1) { screenT = 0; refresh(d) }
+    idleT += dt; if (!dragging && idleT > 8 && !reduce) goal.yaw += dt * 0.04
     cam.yaw += (goal.yaw - cam.yaw) * 0.08; cam.pitch += (goal.pitch - cam.pitch) * 0.08; cam.dist += (goal.dist - cam.dist) * 0.08
     const D = cam.dist * fit
     camera.position.set(Math.sin(cam.yaw) * Math.cos(cam.pitch) * D, 1.4 + Math.sin(cam.pitch) * D, Math.cos(cam.yaw) * Math.cos(cam.pitch) * D)
-    camera.lookAt(0, 1.4, 0)
-    phaseT += dt; if (phaseT > 2.6) nextPhase()
+    camera.lookAt(0, 1.3, 0)
     const rect = canvas.getBoundingClientRect()
-    bots.forEach((b) => {
-      const m = b.m, to = b.target.clone().sub(b.pos); to.y = 0
+    beamMat.opacity = S.connected ? 0.045 : 0.012
+    people.forEach((p) => {
+      const role = S.roles[p.st.id]
+      const to = p.target.clone().sub(p.pos); to.y = 0
       const moving = to.length() > 0.05
-      if (moving) { b.pos.add(to.clampLength(0, dt * 1.45)); b.walk += dt * 9; m.root.rotation.y = Math.atan2(to.x, to.z) }
-      else { const look = new THREE.Vector3().subVectors(b.st.group.position, b.pos); m.root.rotation.y += (Math.atan2(look.x, look.z) - m.root.rotation.y) * 0.1 }
-      m.root.position.set(b.pos.x, reduce ? 0 : Math.abs(Math.sin(b.walk)) * (moving ? 0.08 : 0) + Math.sin(t * 2 + b.st.angle) * 0.02, b.pos.z)
-      m.legs[0].position.z = moving ? Math.sin(b.walk) * 0.12 : 0; m.legs[1].position.z = moving ? -Math.sin(b.walk) * 0.12 : 0
-      b.typing = Math.max(0, b.typing - dt)
-      const typ = b.typing > 0 && !reduce
-      m.arms[0].rotation.x = typ ? -1.1 + Math.sin(t * 22) * 0.12 : moving ? Math.sin(b.walk) * 0.5 : -0.2
-      m.arms[1].rotation.x = typ ? -1.1 + Math.cos(t * 22) * 0.12 : moving ? -Math.sin(b.walk) * 0.5 : -0.2
-      m.head.rotation.y = typ ? Math.sin(t * 3) * 0.15 : Math.sin(t * 0.7 + b.st.angle) * 0.3
-      const blink = Math.sin(t * 1.3 + b.st.angle * 3) > 0.985 ? 0.1 : 1; m.eyes.forEach((e) => (e.scale.y = blink))
-      ;(m.halo.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.25 * Math.sin(t * 3 + b.st.angle)
-      const h = humans.get(b.st.id)
-      if (h) {
-        h.model.position.set(b.pos.x, 0, b.pos.z)
-        let dy = m.root.rotation.y - h.model.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy))
-        h.model.rotation.y += dy * Math.min(1, dt * 8)
-        if (moving !== h.walking) { h.walking = moving; (moving ? h.walk : h.idle).setEffectiveWeight(1); (moving ? h.idle : h.walk).setEffectiveWeight(1); (moving ? h.idle : h.walk).crossFadeTo(moving ? h.walk : h.idle, 0.35, false) }
-        h.mixer.update(reduce ? 0 : dt)
+      if (moving) { p.pos.add(to.clampLength(0, dt * 1.4)); p.heading = Math.atan2(to.x, to.z) }
+      else { const look = new THREE.Vector3().subVectors(p.st.group.position, p.pos); p.heading = Math.atan2(look.x, look.z) }
+      let dy = p.heading - p.root.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy))
+      p.root.rotation.y += dy * Math.min(1, dt * 6)
+      p.root.position.set(p.pos.x, 0, p.pos.z)
+      if (p.mixer && p.idle && p.walk) {
+        if (moving !== p.walking) {
+          p.walking = moving
+          const from = moving ? p.idle : p.walk, toA = moving ? p.walk : p.idle
+          toA.setEffectiveWeight(1); from.crossFadeTo(toA, 0.4, false)
+        }
+        p.idle.timeScale = S.connected ? 1 : 0.35 // senza dati il respiro rallenta: la figura è ferma, non lavora
+        p.mixer.update(reduce ? 0 : dt)
       }
-      b.sayT = Math.max(0, b.sayT - dt)
-      const p = headPos(b).project(camera)
-      b.tag.style.display = p.z < 1 ? "" : "none"
-      b.tag.style.left = `${(p.x * 0.5 + 0.5) * rect.width}px`; b.tag.style.top = `${(-p.y * 0.5 + 0.5) * rect.height}px`
-      const say = b.sayT > 0 ? lastSay(d, b.st.id) : ""
-      ;(b.tag.lastChild as HTMLElement).textContent = say
-      b.tag.classList.toggle("on", !!say)
+      // luce del ruolo: dice lo stato vero, con un breve impulso quando il bot ha scritto nel turno appena arrivato
+      const base = role.status === "attivo" ? 0.5 : role.status === "in attesa" ? 0.18 : role.status === "errore" ? 0.6 : 0.03
+      const flash = Math.max(0, 1 - (now - p.pulse) / 1200)
+      p.joints.forEach((m) => {
+        m.emissive.setHex(role.status === "errore" ? 0xe04848 : p.st.color)
+        m.emissiveIntensity = base + flash * 0.8
+      })
+      p.st.deskLight.intensity = S.connected ? 0.25 + base * 0.8 + flash : 0.05
+      ;(p.st.pad.material as THREE.MeshBasicMaterial).opacity = S.connected ? 0.15 + base * 0.6 : 0.06
+      const hp = headPos(p).project(camera)
+      p.tag.style.display = hp.z < 1 ? "" : "none"
+      p.tag.style.left = `${(hp.x * 0.5 + 0.5) * rect.width}px`; p.tag.style.top = `${(-hp.y * 0.5 + 0.5) * rect.height}px`
+      p.tag.dataset.status = role.status
+      ;(p.tag.firstChild as HTMLElement).textContent = `${ROLE_INFO[p.st.id].title} · ${role.status}`
+      ;(p.tag.lastChild as HTMLElement).textContent = now < p.sayUntil ? p.say : ""
+      p.tag.title = STATUS_LABEL[role.status]
     })
     for (let i = packets.length - 1; i >= 0; i--) {
-      const k = packets[i]; k.t += dt / 1.6
-      const a = headPos(k.from), c = headPos(k.to), mid = a.clone().lerp(c, 0.5); mid.y += 2.2
+      const k = packets[i]; k.t += dt / 1.4
+      const a = headPos(k.from), c = headPos(k.to), mid = a.clone().lerp(c, 0.5); mid.y += 1.6
       const u = Math.min(1, k.t)
       k.mesh.position.copy(a.multiplyScalar((1 - u) * (1 - u)).add(mid.multiplyScalar(2 * u * (1 - u))).add(c.multiplyScalar(u * u)))
-      if (k.t >= 1) { scene.remove(k.mesh); packets.splice(i, 1); k.to.typing = 1.2 }
+      if (k.t >= 1) { scene.remove(k.mesh); (k.mesh.material as THREE.Material).dispose(); packets.splice(i, 1) }
     }
-    holo.rotation.y += reduce ? 0 : dt * 0.35
-    candles.children.forEach((c, i) => { c.scale.y = reduce ? 1 : 0.85 + 0.15 * Math.sin(t * 2 + i) })
+    if (S.connected && !reduce) holo.rotation.y += dt * 0.12
     priceTag.mesh.quaternion.copy(camera.quaternion).premultiply(holo.quaternion.clone().invert())
-    rim.intensity = 1 + Math.sin(t * 1.5) * 0.3
-    screenT += dt; if (screenT > 0.25) { screenT = 0; stations.forEach((s) => s.screen.redraw(t, d)); priceTag.redraw(t, d) }
     renderer.render(scene, camera)
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)
 
   return () => {
-    disposed = true; cancelAnimationFrame(raf); ro.disconnect(); envTex.dispose(); pmrem.dispose()
+    disposed = true; cancelAnimationFrame(raf); ro.disconnect(); timers.forEach((t) => clearTimeout(t))
     canvas.removeEventListener("pointerdown", onDown); canvas.removeEventListener("pointermove", onMove); canvas.removeEventListener("pointerup", onUp)
     canvas.removeEventListener("wheel", onWheel); canvas.removeEventListener("touchmove", onTouch); canvas.removeEventListener("touchend", onTouchEnd)
     canvas.removeEventListener("dblclick", nextView)
     tagsEl.innerHTML = ""
     scene.traverse((o: any) => { o.geometry?.dispose?.(); const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : []; mats.forEach((mm: any) => { mm.map?.dispose?.(); mm.dispose?.() }) })
-    renderer.dispose()
+    envTex.dispose(); pmrem.dispose(); renderer.dispose()
   }
 }
-
-/** Per il pulsante "Cambia vista" esterno: simula un doppio clic sulla tela. */
-export function nextSalaView(canvas: HTMLCanvasElement) { canvas.dispatchEvent(new MouseEvent("dblclick")) }
