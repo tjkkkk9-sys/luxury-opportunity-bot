@@ -316,8 +316,11 @@ export const decideProposal = action({
 /** Solo su comando del titolare: il registro LIVE torna uguale al conto Revolut X. */
 export const alignBook = action({
   args: {},
+  handler: async (ctx): Promise<{ notes: string[]; budget: number }> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.alignInternal, {}) },
+})
+export const alignInternal = internalAction({
+  args: {},
   handler: async (ctx): Promise<{ notes: string[]; budget: number }> => {
-    await requireOwner(ctx)
     const now = Math.floor(Date.now() / 1000)
     if (!(await ctx.runMutation(internal.store.lock, { now }))) throw new Error("Turno in corso: riprova tra un minuto")
     let out: { notes: string[]; budget: number }
