@@ -108,3 +108,4 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 @media (min-width: 901px) { .sala-roles { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .lab-why { margin: 8px 0; padding-left: 18px; font-size: 13px; color: hsl(var(--down)); }
 .whatif { margin-top: 8px; align-items: center; } .whatif input { width: 64px; margin-left: 6px; }
+.variant { border-top: 1px solid hsl(var(--line)); padding-top: 10px; margin-top: 10px; } .variant h3 { margin: 0 0 4px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

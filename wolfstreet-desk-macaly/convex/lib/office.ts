@@ -552,7 +552,8 @@ export class Office {
       contract: {
         mercato: "Revolut X · spot (niente leva)",
         fonte: `Revolut X: candele 4h chiuse fino alle ${last ? hhmm(last.t + cfg.interval_min * 60) : "—"}, bid/ask letti alle ${hhmm(this.now)}`,
-        strategia: `${STRATEGY_VERSION} · soglia ${cfg.min_score} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`,
+        strategia: `${STRATEGY_VERSION}${cfg.strategy_note ? ` (${cfg.strategy_note})` : ""} · soglia ${cfg.min_score}${cfg.min_adx ? ` · ADX≥${cfg.min_adx}` : ""}` +
+          `${cfg.ema50_slope_bars ? ` · EMA50 in salita ${cfg.ema50_slope_bars} candele` : ""} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`,
         fatti: [`Punteggio regole ${sig.score}/100`, ...sig.reasons.slice(0, 4),
           `RSI ${g6(sig.ind.rsi ?? NaN)} · ADX ${g6(sig.ind.adx ?? NaN)} · ATR ${g6(sig.ind.atr_pct ?? NaN)}%`],
         ipotesi: ["Il trend di fondo 4h resta rialzista (EMA50 sopra EMA200)", "La correzione in corso si esaurisce vicino ai livelli attuali"],

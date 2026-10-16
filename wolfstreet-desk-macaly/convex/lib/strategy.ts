@@ -89,6 +89,12 @@ export function analyze(symbol: string, cs: Candle[], cfg: Cfg, series?: Compute
   if (R > 70) block.push(`RSI ipercomprato ${R.toFixed(0)}`)
   if (!((cfg.min_atr_pct ?? 0.35) <= atrPct && atrPct <= (cfg.max_atr_pct ?? 6))) block.push(`Volatilità fuori range (${atrPct.toFixed(2)}%)`)
   if (spreadPct !== null && spreadPct > (cfg.max_spread_pct ?? 0.3)) block.push(`Spread troppo largo (${spreadPct.toFixed(2)}%)`)
+  // filtri opzionali delle varianti (spenti se non configurati: comportamento base invariato)
+  if (cfg.min_adx && X < cfg.min_adx) block.push(`Trend debole: ADX ${X.toFixed(0)} sotto ${cfg.min_adx}`)
+  if (cfg.ema50_slope_bars) {
+    const past = g("ema50", k - cfg.ema50_slope_bars)
+    if (past === null || E50 <= past) block.push(`EMA50 non in salita nelle ultime ${cfg.ema50_slope_bars} candele`)
+  }
   score = Math.max(0, Math.min(100, score))
   const action = block.length ? "EVITA" : score >= (cfg.min_score ?? 70) ? "COMPRA" : "ATTESA"
   return {

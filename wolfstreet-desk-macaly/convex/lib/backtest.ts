@@ -11,6 +11,16 @@ export const PROMOTION = { min_trades: 30, min_profit_factor: 1.2, min_oos_expec
 export const OOS_SHARE = 0.4 // ultimo 40% del periodo: dati più recenti, giudicati a parte
 export const DEFAULT_SLIP_PCT = 0.05 // slippage stimato per lato, in %
 
+/** Varianti registrate PRIMA di vederne i risultati, ciascuna con la sua motivazione. Non si aggiungono dopo il test. */
+export const VARIANTS: { id: string; name: string; why: string; cfg: Record<string, any> }[] = [
+  { id: "A", name: "Solo BTC+ETH", why: "SOL e XRP perdevano nelle prove: si tengono le due coppie più liquide", cfg: { pairs: ["BTC-EUR", "ETH-EUR"], min_score: 80 } },
+  { id: "B", name: "BTC+ETH, trend forte", why: "Entra solo se il trend è forte (ADX ≥ 20) e la EMA50 sale da 6 candele", cfg: { pairs: ["BTC-EUR", "ETH-EUR"], min_score: 80, min_adx: 20, ema50_slope_bars: 6 } },
+  { id: "C", name: "BTC+ETH, trend forte, target largo", why: "Come B, ma lascia correre i guadagni: target a 6 ATR", cfg: { pairs: ["BTC-EUR", "ETH-EUR"], min_score: 80, min_adx: 20, ema50_slope_bars: 6, tp_atr: 6 } },
+  { id: "D", name: "BTC+ETH, trend forte, stop più stretto", why: "Come B, ma perdite più piccole: stop a 2 ATR, target a 4 ATR", cfg: { pairs: ["BTC-EUR", "ETH-EUR"], min_score: 80, min_adx: 20, ema50_slope_bars: 6, stop_atr: 2, tp_atr: 4 } },
+]
+/** Chiavi che una variante può cambiare (mai limiti di perdita, budget o tetti di sicurezza). */
+export const VARIANT_KEYS = ["pairs", "min_score", "min_adx", "ema50_slope_bars", "stop_atr", "tp_atr"] as const
+
 export type BtTrade = { symbol: string; t_in: number; t_out: number; entry: number; exit: number; stop0: number; reason: string; pnl_pct: number; r: number; oos: boolean }
 export type BtStats = { trades: number; win_rate: number | null; expectancy_r: number | null; avg_pnl_pct: number | null; profit_factor: number | null; max_drawdown_r: number; avg_hold_h: number | null }
 

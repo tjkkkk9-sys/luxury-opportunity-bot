@@ -7,7 +7,7 @@ import { internal } from "./_generated/api"
 import { action, internalAction } from "./_generated/server"
 import type { ActionCtx } from "./_generated/server"
 import { esc, Office, selftest as runSelftest, STRATEGY_VERSION, toDash } from "./lib/office"
-import { labReport } from "./lib/backtest"
+import { labReport, VARIANT_KEYS, VARIANTS } from "./lib/backtest"
 import * as safety from "./lib/safety"
 import * as st from "./lib/strategy"
 import type { AiReview, Proposal } from "./lib/office"
@@ -209,6 +209,73 @@ export const runLab = internalAction({
     return { verdict: report.verdict, trades: report.total.all.trades }
   },
 })
+/** Prova le varianti registrate (sola lettura) sullo stesso storico reale. Nessuna regola cambia. */
+async function labData(ctx: ActionCtx, pairs: string[], interval: number, now: number) {
+  const client = await buildClient(ctx)
+  const data: Record<string, st.Candle[]> = {}
+  for (const sym of pairs.map(toDash)) data[sym] = st.closedOnly(st.normalize(await client.candles(sym, interval, 1500)), interval, now)
+  return data
+}
+const variantStrat = (cfg: any, name: string) => `${STRATEGY_VERSION} · variante ${name} · ${cfg.pairs.join("+")} · soglia ${cfg.min_score}` +
+  `${cfg.min_adx ? ` · ADX≥${cfg.min_adx}` : ""}${cfg.ema50_slope_bars ? ` · EMA50 in salita ${cfg.ema50_slope_bars}` : ""} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`
+export const runVariants = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const now = Math.floor(Date.now() / 1000)
+    const { config } = await ctx.runQuery(internal.store.readAll, {})
+    const pairs = [...new Set(VARIANTS.flatMap((x) => x.cfg.pairs as string[]))]
+    const data = await labData(ctx, pairs, config.interval_min ?? 240, now)
+    const out = VARIANTS.map((vr) => {
+      const [cfg] = safety.clampConfig({ ...config, ...vr.cfg })
+      const r = labReport(Object.fromEntries(cfg.pairs.map((p: string) => [toDash(p), data[toDash(p)]])), cfg, now, variantStrat(cfg, vr.id))
+      return { id: vr.id, name: vr.name, why: vr.why, cfg: vr.cfg, strategy: r.strategy, verdict: r.verdict, reasons: r.reasons, total: r.total,
+        symbols: r.symbols.map((x) => ({ symbol: x.symbol, all: x.all, recent: x.out_of_sample, candles: x.candles })) }
+    })
+    await ctx.runMutation(internal.store.saveKV, { key: "lab_variants", value: JSON.stringify({ t: now, tested: out.length, variants: out }) })
+    await telegram(ctx, `🧪 <b>Laboratorio · varianti</b> (registrate prima del test, stesse soglie)\n` + out.map((x) =>
+      `• ${esc(x.id)} ${esc(x.name)}: <b>${esc(x.verdict)}</b> · ${x.total.all.trades} op. · ${x.total.all.expectancy_r?.toFixed(2) ?? "—"} R · PF ${x.total.all.profit_factor?.toFixed(2) ?? "—"}`).join("\n") +
+      `\nAttenzione: provare ${out.length} varianti sugli stessi dati gonfia un po' il risultato migliore.`)
+    return out.map((x) => ({ id: x.id, verdict: x.verdict, trades: x.total.all.trades, r: x.total.all.expectancy_r, pf: x.total.all.profit_factor, recent_r: x.total.out_of_sample.expectancy_r }))
+  },
+})
+/** Attiva una variante solo se SUPERA di nuovo il Laboratorio su dati appena scaricati. Salva la configurazione precedente. */
+export const promoteInternal = internalAction({
+  args: { id: v.string() },
+  handler: async (ctx, { id }): Promise<{ ok: boolean; text: string }> => {
+    const vr = VARIANTS.find((x) => x.id === id)
+    if (!vr) return { ok: false, text: "Variante sconosciuta" }
+    const now = Math.floor(Date.now() / 1000)
+    const { config } = await ctx.runQuery(internal.store.readAll, {})
+    const [cfg] = safety.clampConfig({ ...config, ...vr.cfg })
+    const data = await labData(ctx, cfg.pairs, cfg.interval_min, now)
+    const r = labReport(data, cfg, now, variantStrat(cfg, vr.id))
+    if (r.verdict !== "SUPERATO") return { ok: false, text: `Variante ${vr.id} non attivata: ${r.verdict} (${r.reasons.join(" · ")})` }
+    await ctx.runMutation(internal.store.applyStrategy, { patch: JSON.stringify(vr.cfg), note: `variante ${vr.id} · ${vr.name}` })
+    await ctx.runMutation(internal.store.saveLab, { lab: JSON.stringify(r) })
+    const text = `Variante ${vr.id} (${vr.name}) attiva: ${r.total.all.trades} op. simulate, ${r.total.all.expectancy_r?.toFixed(2)} R, PF ${r.total.all.profit_factor?.toFixed(2)}. Configurazione precedente salvata: puoi tornare indietro dal Laboratorio.`
+    await telegram(ctx, `✅ <b>Strategia promossa</b>\n${esc(text)}\nOgni ordine richiede ancora la tua conferma.`)
+    return { ok: true, text }
+  },
+})
+export const promoteVariant = action({
+  args: { id: v.string() },
+  handler: async (ctx, a): Promise<{ ok: boolean; text: string }> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.promoteInternal, a) },
+})
+export const variantsNow = action({
+  args: {},
+  handler: async (ctx): Promise<any> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runVariants, {}) },
+})
+export const rollbackStrategy = action({
+  args: {},
+  handler: async (ctx): Promise<{ ok: boolean; text: string }> => {
+    await requireOwner(ctx)
+    const r: { ok: boolean; text: string } = await ctx.runMutation(internal.store.rollbackStrategy, {})
+    if (r.ok) { await telegram(ctx, `↩️ ${esc(r.text)}`); await ctx.runAction(internal.desk.runLab, {}) }
+    return r
+  },
+})
+void VARIANT_KEYS
+
 export const labNow = action({
   args: { what_if_min_score: v.optional(v.number()) },
   handler: async (ctx, a): Promise<any> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runLab, a) },

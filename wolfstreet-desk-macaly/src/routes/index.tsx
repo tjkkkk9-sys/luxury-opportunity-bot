@@ -137,7 +137,7 @@ function Desk() {
       {tab === "posizioni" && <Posizioni D={D} />}
       {tab === "registro" && <Registro D={D} />}
       {tab === "sala" && <Sala D={D} />}
-      {tab === "lab" && <Lab D={D} />}
+      {tab === "lab" && <Lab D={D} data={data} />}
       {tab === "comandi" && <Comandi data={data} D={D} />}
     </div>
   )
@@ -709,8 +709,19 @@ function Room({ D }: { D: any }) {
 }
 
 // ------------------------------------------------------------------ laboratorio: prove storiche e previsione → esito
-function Lab({ D }: { D: any }) {
+function Lab({ D, data }: { D: any; data: any }) {
   const run = useAction(api.desk.labNow)
+  const runV = useAction(api.desk.variantsNow)
+  const promote = useAction(api.desk.promoteVariant)
+  const rollback = useAction(api.desk.rollbackStrategy)
+  const [vmsg, setVmsg] = useState("")
+  const [askP, setAskP] = useState("")
+  const V = data?.variants
+  async function vdo(fn: () => Promise<any>, wait: string) {
+    setAskP(""); setVmsg(wait)
+    try { const r: any = await fn(); setVmsg(r?.text ?? "Fatto.") }
+    catch (e: any) { setVmsg(String(e?.data ?? e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) }
+  }
   const [msg, setMsg] = useState("")
   const [wi, setWi] = useState("80")
   const [what, setWhat] = useState<any>(null)
@@ -749,6 +760,27 @@ function Lab({ D }: { D: any }) {
         {what && <div className="tw"><p className="note"><b>Solo prova, nessuna regola cambiata</b> · {what.strategy} → <b>{what.verdict}</b>{what.reasons?.length ? ` · ${what.reasons.join(" · ")}` : ""}</p><table>
           <thead><tr><th>Strumento</th><th>Op.</th><th>Vinte</th><th>R medio</th><th>Profit f.</th><th>Calo R</th><th>Recente: op. · R</th></tr></thead>
           <tbody>{what.symbols.map((x: any) => row(x.symbol, x.all, x.recent))}{row("Totale", what.total.all, what.total.out_of_sample)}</tbody></table></div>}
+      </article>
+      <article className="panel span2">
+        <div className="ph"><h2>Varianti di strategia</h2><span className="eyebrow">{data?.strategyNote ? `attiva: ${data.strategyNote}` : "attiva: strategia base"}</span></div>
+        <p className="note">Varianti registrate prima del test, ognuna con la sua motivazione, giudicate con le stesse soglie fisse. Una variante si attiva solo se supera di nuovo il Laboratorio su dati appena scaricati; la configurazione precedente resta salvata. Cambiano solo parametri di strategia: limiti di perdita, budget e tetti di sicurezza no. Provare più varianti sugli stessi dati gonfia un po' il risultato migliore: la previsione → esito dirà se regge.</p>
+        {V ? <>
+          <p className="stamp">{V.tested} varianti provate · {when(V.t)}</p>
+          {V.variants.map((x: any) => (
+            <div className="variant" key={x.id}>
+              <h3>{x.id} · {x.name} <span className={`chip ${x.verdict === "SUPERATO" ? "c-buy" : x.verdict === "NON SUPERATO" ? "c-avoid" : "c-wait"}`}>{x.verdict}</span></h3>
+              <p className="note">{x.why}</p>
+              <div className="tw"><table><thead><tr><th>Strumento</th><th>Op.</th><th>Vinte</th><th>R medio</th><th>Profit f.</th><th>Calo R</th><th>Recente: op. · R</th></tr></thead>
+                <tbody>{x.symbols.map((y: any) => row(y.symbol, y.all, y.recent))}{row("Totale", x.total.all, x.total.out_of_sample)}</tbody></table></div>
+              {x.reasons?.length > 0 && <ul className="lab-why">{x.reasons.map((r: string) => <li key={r}>{r}</li>)}</ul>}
+              {x.verdict === "SUPERATO" && (askP === x.id
+                ? <div className="row"><button className="solid" onClick={() => void vdo(() => promote({ id: x.id }), "Riscarico lo storico e riprovo prima di attivare…")}>Sì, attiva {x.id}</button><button className="ghost" onClick={() => setAskP("")}>Annulla</button></div>
+                : <button className="solid" onClick={() => setAskP(x.id)}>Attiva questa variante</button>)}
+            </div>))}
+        </> : <p className="empty">Varianti non ancora provate.</p>}
+        <div className="row"><button className="ghost" onClick={() => void vdo(() => runV({}), "Provo le varianti sullo storico reale… (1–2 minuti)")}>Riprova le varianti</button>
+          {data?.configPrev?.values && <button className="ghost" onClick={() => void vdo(() => rollback({}), "Ripristino…")}>Torna alla strategia precedente</button>}</div>
+        {vmsg && <p className="note" role="status">{vmsg}</p>}
       </article>
       <article className="panel span2">
         <div className="ph"><h2>Previsione → esito</h2><span className="eyebrow">{F ? `${F.evaluated} valutate · ${F.open} aperte` : ""}</span></div>

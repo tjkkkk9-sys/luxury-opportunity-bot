@@ -63,6 +63,40 @@ export const saveTurn = internalMutation({
   },
 })
 
+export const saveKV = internalMutation({
+  args: { key: v.string(), value: v.string() },
+  handler: async (ctx, { key, value }) => {
+    if (!["lab_variants"].includes(key)) throw new Error("chiave non prevista")
+    await putKV(ctx, key, value)
+  },
+})
+const STRATEGY_KEYS = ["pairs", "min_score", "min_adx", "ema50_slope_bars", "stop_atr", "tp_atr"]
+/** Cambia SOLO i parametri di strategia (mai limiti di perdita, budget o tetti). Salva prima la versione precedente. */
+export const applyStrategy = internalMutation({
+  args: { patch: v.string(), note: v.string() },
+  handler: async (ctx, { patch, note }) => {
+    const p = parse(patch, {})
+    for (const k of Object.keys(p)) if (!STRATEGY_KEYS.includes(k)) throw new Error(`Campo non modificabile: ${k}`)
+    const cur = parse(await getKV(ctx, "config"), {})
+    const eff = { ...DEFAULT_CONFIG, ...cur }
+    const prev = Object.fromEntries(STRATEGY_KEYS.map((k) => [k, eff[k] ?? null]))
+    await putKV(ctx, "config_prev", JSON.stringify({ t: Math.floor(Date.now() / 1000), values: prev, replaced_by: note }))
+    const next = { ...cur, ...Object.fromEntries(STRATEGY_KEYS.map((k) => [k, null])), ...p }
+    for (const k of STRATEGY_KEYS) if (next[k] === null) next[k] = (DEFAULT_CONFIG as any)[k] ?? null
+    await putKV(ctx, "config", JSON.stringify({ ...next, strategy_note: note }))
+  },
+})
+export const rollbackStrategy = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const prev = parse(await getKV(ctx, "config_prev"), null)
+    if (!prev?.values) return { ok: false, text: "Nessuna configurazione precedente da ripristinare" }
+    const cur = parse(await getKV(ctx, "config"), {})
+    await putKV(ctx, "config", JSON.stringify({ ...cur, ...prev.values, strategy_note: "ripristinata la configurazione precedente" }))
+    await putKV(ctx, "config_prev", "")
+    return { ok: true, text: `Strategia riportata a com'era prima di: ${prev.replaced_by}` }
+  },
+})
 export const readLab = internalQuery({ args: {}, handler: async (ctx) => parse(await getKV(ctx, "lab"), null) })
 export const saveLab = internalMutation({ args: { lab: v.string() }, handler: async (ctx, { lab }) => { await putKV(ctx, "lab", lab) } })
 
@@ -122,6 +156,9 @@ export const view = query({
       control: { ...DEFAULT_CONTROL, ...parse(await getKV(ctx, "control"), {}) },
       keys,
       keyFingerprint: (await getKV(ctx, "key_fingerprint")) ?? null,
+      variants: parse(await getKV(ctx, "lab_variants"), null),
+      configPrev: parse(await getKV(ctx, "config_prev"), null),
+      strategyNote: parse(await getKV(ctx, "config"), {})?.strategy_note ?? null,
     }
   },
 })

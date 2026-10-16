@@ -189,3 +189,19 @@ describe("Ufficio con Verificatore", () => {
     expect(state.forecasts.every((f: any) => f.tag === "bloccato dal verificatore")).toBe(true)
   })
 })
+
+describe("Varianti registrate", () => {
+  it("le varianti cambiano solo parametri di strategia, mai limiti o budget", async () => {
+    const { VARIANTS, VARIANT_KEYS } = await import("../convex/lib/backtest")
+    for (const v of VARIANTS) for (const k of Object.keys(v.cfg)) expect(VARIANT_KEYS as readonly string[]).toContain(k)
+    expect(VARIANTS.length).toBeLessThanOrEqual(4)
+  })
+  it("i filtri delle varianti bloccano davvero, e spenti non cambiano nulla", () => {
+    const cs = DATA["BTC-EUR"]
+    const base = backtest("BTC-EUR", cs, CFG)
+    expect(backtest("BTC-EUR", cs, { ...CFG, min_adx: 0, ema50_slope_bars: 0 })).toEqual(base)
+    expect(backtest("BTC-EUR", cs, { ...CFG, min_adx: 99 })).toHaveLength(0)
+    const sig = st.analyze("BTC-EUR", cs, { ...CFG, ema50_slope_bars: 6 })
+    expect(sig.reasons.join() + sig.action).toBeTruthy()
+  })
+})
