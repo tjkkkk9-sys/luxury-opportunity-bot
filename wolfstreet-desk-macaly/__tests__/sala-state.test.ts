@@ -8,6 +8,7 @@ const base = (over: any = {}) => ({
     { t: T, bot: "ANALISTA", text: "BTC-EUR 62/100 → nessun ingresso", level: "info" },
     { t: T, bot: "TRADER", text: "BTC-EUR tenuto, stop 70727", level: "info" },
     { t: T, bot: "SISTEMA", text: "turno completato", level: "info" },
+    { t: T, bot: "SCOUT", text: "Saldo confermato da Revolut X", level: "info" },
     { t: T - 1800, bot: "RISK", text: "segnale valido ma bloccato: limite giornaliero", level: "warn" },
   ],
   ...over,
@@ -39,9 +40,22 @@ describe("salaState", () => {
     expect(S.roles.ANALISTA.status).toBe("attivo")
     expect(S.roles.RISK.status).toBe("in attesa") // la sua voce è del turno prima
     expect(S.roles.RISK.last?.text).toMatch(/bloccato/)
-    const E = salaState(base({ log: [{ t: T, bot: "SISTEMA", text: "Revolut X non risponde", level: "error" }] }), T + 60)
-    expect(E.roles.SISTEMA.status).toBe("errore")
+    expect(S.roles.SCOUT.status).toBe("attivo")
+    expect(Object.keys(S.roles)).toEqual(["SCOUT", "ANALISTA", "RISK", "TRADER"]) // Sistema non è un robot
+    expect(S.system.entries[0].text).toBe("turno completato")
+    const E = salaState(base({ log: [{ t: T, bot: "SCOUT", text: "Registro e conto non coincidono", level: "error" }, { t: T, bot: "SISTEMA", text: "Turno interrotto", level: "error" }] }), T + 60)
+    expect(E.roles.SCOUT.status).toBe("errore")
+    expect(E.roles.SCOUT.error?.text).toMatch(/non coincidono/)
+    expect(E.events.scoutStop).toBe(true)
+    expect(E.system.error?.text).toBe("Turno interrotto")
     expect(E.events.errors).toBe(true)
+  })
+  it("proposte in attesa dal backend, mai inventate", () => {
+    const P = base({ proposals: [{ status: "in attesa", expires: T + 900 }, { status: "scaduta", expires: T - 1 }, { status: "in attesa", expires: T - 5 }],
+      log: [{ t: T, bot: "TRADER", text: "PROPOSTA acquisto BTC-EUR 12,00 €", level: "info" }] })
+    expect(salaState(P, T + 60).pendingProposals).toBe(1)
+    expect(salaState(P, T + 60).events.proposal).toBe(true)
+    expect(salaState({ ...P, generated_at: T - 7200 }, T + 60).pendingProposals).toBe(0)
   })
   it("eventi solo da voci reali", () => {
     const S = salaState(base(), T + 60)

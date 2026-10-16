@@ -39,7 +39,13 @@ class Fake {
 
 let seq = 0
 const uuid = () => `coid-${++seq}`
-async function replay(ctl: safety.Control, opts: { ordersOk?: boolean; ai?: any; every?: number } = {}) {
+/** Il titolare conferma ogni proposta in attesa (simula il tocco su "Approva"). */
+async function approveAll(fake: Fake, ctl: safety.Control, state: any, now: number) {
+  for (const p of (state.proposals ?? []).filter((x: any) => x.status === "in attesa")) {
+    await new Office(fake as any, CFG, ctl, state, now, { uuid }).decide(p.id, true)
+  }
+}
+async function replay(ctl: safety.Control, opts: { ordersOk?: boolean; ai?: any; every?: number; approve?: boolean } = {}) {
   const fake = new Fake(opts.ordersOk ?? true)
   const state: any = {}
   const times = DATA["BTC-EUR"].map((c) => c.t).slice(300).filter((_, i) => i % (opts.every ?? 2) === 0)
@@ -47,6 +53,7 @@ async function replay(ctl: safety.Control, opts: { ordersOk?: boolean; ai?: any;
   for (const t of times) {
     fake.now = t + 1
     snap = await new Office(fake as any, CFG, ctl, state, t + 1, { uuid, ai: opts.ai }).run()
+    if (opts.approve) await approveAll(fake, ctl, state, t + 61)
   }
   return { fake, state, snap, times }
 }
@@ -95,8 +102,18 @@ describe("ufficio su candele reali", () => {
     expect(snap.mode).toBe("shadow")
     expect(snap.live_blocks.length).toBeGreaterThan(0)
   })
-  it("LIVE armato opera con client_order_id unici e senza ordini in sospeso", async () => {
-    const { fake, state } = await replay({ mode: "live", live_armed: true, armed_key: "fp-test" })
+  it("LIVE armato senza la tua conferma non invia mai ordini: solo proposte", async () => {
+    const { fake, state, snap } = await replay({ mode: "live", live_armed: true, armed_key: "fp-test" })
+    expect(fake.orders).toHaveLength(0)
+    expect(state.proposals.some((p: any) => p.side === "buy")).toBe(true)
+    expect(state.proposals.every((p: any) => ["in attesa", "scaduta"].includes(p.status))).toBe(true)
+    expect(snap.proposals.length).toBeGreaterThan(0)
+    const c = state.proposals[0].contract
+    for (const k of ["mercato", "fonte", "strategia", "fatti", "ipotesi", "controtesi", "costi", "quantita", "rischio", "mancano"]) expect(c[k]).toBeTruthy()
+    expect(JSON.stringify(c)).not.toMatch(/confidenza \d|\d+% di successo/i)
+  })
+  it("LIVE armato con conferma: client_order_id unici e senza ordini in sospeso", async () => {
+    const { fake, state } = await replay({ mode: "live", live_armed: true, armed_key: "fp-test" }, { approve: true })
     expect(fake.orders.some((o) => o[1] === "buy")).toBe(true)
     expect(new Set(fake.orders.map((o) => o[2])).size).toBe(fake.orders.length)
     expect(state.books.live.closed.length).toBeGreaterThan(0)
@@ -110,6 +127,7 @@ describe("ufficio su candele reali", () => {
     for (const t of DATA["BTC-EUR"].map((c) => c.t).slice(300)) {
       fake.now = t + 1
       await new Office(fake as any, CFG, ctl, state, t + 1, { uuid, persist }).run()
+      for (const p of (state.proposals ?? []).filter((x: any) => x.status === "in attesa")) await new Office(fake as any, CFG, ctl, state, t + 61, { uuid, persist }).decide(p.id, true)
       if (fake.orders.length) break
     }
     expect(fake.orders).toHaveLength(1)
@@ -142,6 +160,9 @@ describe("ufficio su candele reali", () => {
     fake.now = t + 1
     const state: any = { books: { live: { ...emptyBook(40), cash: 30, positions: { "BTC-EUR": { symbol: "BTC-EUR", qty: 0.0001, entry: 1e9, cost: 10, atr: 1, stop: 1e9, tp: 2e9, high: 1e9, opened_at: 0, mode: "live", score: 90 } } } } }
     await new Office(fake as any, CFG, { mode: "paper" }, state, t + 1, { uuid }).run()
+    expect(fake.orders).toHaveLength(0) // prima la proposta, poi la tua conferma
+    expect(state.proposals.map((p: any) => p.side)).toEqual(["sell"])
+    await approveAll(fake, { mode: "paper" }, state, t + 61)
     expect(fake.orders.map((o) => o[1])).toEqual(["sell"])
     expect(state.books.live.positions).toEqual({})
   })
@@ -213,5 +234,72 @@ describe("calo massimo e versamenti", () => {
     const o = new Office(new Fake() as any, { ...CFG, budget_eur: 60 }, { mode: "shadow" } as any, state, 1_800_000_000)
     expect(o.live.equity.map((x) => x[1])).toEqual([60, 59.988, 59.9881, 59.94])
     expect(o.live.eq_v2).toBe(true)
+  })
+})
+
+describe("Scout e conferma del titolare", () => {
+  const T = DATA["BTC-EUR"][400].t + 1
+  const LIVE: any = { mode: "live", live_armed: true, armed_key: "fp-test" }
+  const pos = { symbol: "BTC-EUR", qty: 0.00016317, entry: 1e9, cost: 12, atr: 1, stop: 1e9, tp: 2e9, high: 1e9, opened_at: 0, mode: "live", score: 75 }
+  const withBal = (bal: any) => { const f = new Fake(); f.now = T; f.balances = async () => bal; return f }
+
+  it("BTC venduto fuori dal desk: niente vendite ripetute, un solo avviso, poi allineamento", async () => {
+    const fake = withBal({ EUR: { available: "0.20", total: "0.20" }, BTC: { available: "0", total: "0" } })
+    const state: any = { books: { live: { ...emptyBook(60), cash: 48, positions: { "BTC-EUR": { ...pos } } } } }
+    const o1 = new Office(fake as any, { ...CFG, budget_eur: 60 }, { ...LIVE }, state, T, { uuid })
+    const s1: any = await o1.run()
+    expect(fake.orders).toHaveLength(0)
+    expect(state.proposals ?? []).toHaveLength(0)
+    expect(s1.scout.stop).toMatch(/non coincidono/)
+    expect(s1.log.some((l: any) => l.bot === "SCOUT" && l.level === "error" && /BTC-EUR: sul conto 0 BTC/.test(l.text))).toBe(true)
+    expect(o1.events.join()).toMatch(/Scout/)
+    const o2 = new Office(fake as any, { ...CFG, budget_eur: 60 }, { ...LIVE }, state, T + 1800, { uuid })
+    await o2.run()
+    expect(o2.events).toHaveLength(0) // stessa differenza: nessun nuovo avviso
+    expect(fake.orders).toHaveLength(0)
+    const r = await new Office(fake as any, { ...CFG, budget_eur: 60 }, { ...LIVE }, state, T + 1900, { uuid }).alignToBroker()
+    expect(state.books.live.positions).toEqual({})
+    expect(state.books.live.closed.at(-1).reason).toMatch(/FUORI DAL DESK/)
+    expect(state.books.live.cash).toBeCloseTo(0.2, 6)
+    expect(r.budget).toBeCloseTo(state.books.live.start, 2)
+    expect(r.notes.join()).toMatch(/prelievo/)
+    const s3: any = await new Office(fake as any, { ...CFG, budget_eur: r.budget }, { ...LIVE }, state, T + 3600, { uuid }).run()
+    expect(s3.scout.stop).toBeNull()
+    expect(fake.orders).toHaveLength(0)
+  })
+  it("saldo non confermato: il turno si ferma, nessuna proposta e nessuna vendita", async () => {
+    const fake = new Fake(); fake.now = T
+    fake.balances = async () => { throw new ApiError(503, "non disponibile") }
+    const state: any = { books: { live: { ...emptyBook(40), cash: 28, positions: { "BTC-EUR": { ...pos } } } } }
+    const s: any = await new Office(fake as any, CFG, { ...LIVE }, state, T, { uuid }).run()
+    expect(fake.orders).toHaveLength(0)
+    expect(state.proposals ?? []).toHaveLength(0)
+    expect(s.scout.stop).toMatch(/non conferma il saldo/)
+  })
+  it("alla conferma: prezzo scappato, proposta scaduta o rifiutata = nessun ordine", async () => {
+    const { fake, state } = await replay({ ...LIVE }, { every: 6 })
+    const ps = state.proposals.filter((p: any) => p.side === "buy")
+    expect(ps.length).toBeGreaterThan(0)
+    const p = ps.at(-1)
+    p.status = "in attesa"; p.expires = fake.now + 600
+    const ask = Number((await fake.tickers([p.symbol]))[p.symbol].ask)
+    const real = ask; p.ref_price = ask / 1.02 // il prezzo ora è il 2% sopra la proposta
+    let r = await new Office(fake as any, CFG, { ...LIVE }, state, fake.now + 60, { uuid }).decide(p.id, true)
+    expect(r.ok).toBe(false); expect(p.status).toBe("annullata"); expect(fake.orders).toHaveLength(0)
+    p.status = "in attesa"; p.ref_price = real; p.expires = fake.now - 1
+    r = await new Office(fake as any, CFG, { ...LIVE }, state, fake.now + 60, { uuid }).decide(p.id, true)
+    expect(p.status).toBe("scaduta"); expect(fake.orders).toHaveLength(0)
+    p.status = "in attesa"; p.expires = fake.now + 600
+    r = await new Office(fake as any, CFG, { ...LIVE }, state, fake.now + 60, { uuid }).decide(p.id, false)
+    expect(p.status).toBe("rifiutata"); expect(fake.orders).toHaveLength(0)
+    r = await new Office(fake as any, CFG, { ...LIVE }, state, fake.now + 60, { uuid }).decide(p.id, true)
+    expect(r.ok).toBe(false); expect(fake.orders).toHaveLength(0) // una decisione sola
+  })
+  it("conferma con desk in pausa: il Risk blocca l'acquisto", async () => {
+    const { fake, state } = await replay({ ...LIVE }, { every: 6 })
+    const p = state.proposals.filter((x: any) => x.side === "buy").at(-1)
+    p.status = "in attesa"; p.expires = fake.now + 600
+    const r = await new Office(fake as any, CFG, { ...LIVE, paused: true, pause_reason: "test" }, state, fake.now + 60, { uuid }).decide(p.id, true)
+    expect(r.ok).toBe(false); expect(r.text).toMatch(/pausa/); expect(fake.orders).toHaveLength(0)
   })
 })

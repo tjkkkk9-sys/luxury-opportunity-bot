@@ -7,7 +7,7 @@ import { internal } from "./_generated/api"
 import { action, internalAction } from "./_generated/server"
 import type { ActionCtx } from "./_generated/server"
 import { esc, Office, selftest as runSelftest } from "./lib/office"
-import type { AiReview } from "./lib/office"
+import type { AiReview, Proposal } from "./lib/office"
 import { keyFingerprint, normalizePem, RevolutX } from "./lib/revolutx"
 import { analyzeCfd, byId, clampP500, followIdea, parseYahoo } from "./lib/plus500"
 import type { CfdSignal, Idea } from "./lib/plus500"
@@ -79,17 +79,46 @@ In caso di dubbio scegli VETO. Motivo: massimo 18 parole, in italiano.`,
 }
 
 // ------------------------------------------------------------- Telegram (facoltativo)
-async function telegram(ctx: ActionCtx, text: string) {
+async function telegram(ctx: ActionCtx, text: string, markup?: unknown) {
   const token = await getSecret(ctx, "telegram_token"), chat = await getSecret(ctx, "telegram_chat")
   if (!token || !chat) return
   const url = `https://api.telegram.org/bot${token}/sendMessage`
+  const extra = markup ? { reply_markup: markup } : {}
   try {
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }) })
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true, ...extra }) })
     if (r.status === 400) {
       const plain = text.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
-      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chat, text: plain }) })
+      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chat, text: plain, ...extra }) })
     }
   } catch { /* gli avvisi non fermano il desk */ }
+}
+async function tgCall(ctx: ActionCtx, method: string, body: Record<string, unknown>) {
+  const token = await getSecret(ctx, "telegram_token")
+  if (!token) return
+  await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) }).catch(() => null)
+}
+const hm = (t: number) => new Date(t * 1000).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" })
+/** Proposta del Trader con tutto ciò che serve per decidere, più i pulsanti Approva / Rifiuta. */
+async function sendProposal(ctx: ActionCtx, p: Proposal) {
+  const c = p.contract ?? {}
+  const list = (xs: unknown) => (Array.isArray(xs) ? xs : []).map((x) => "• " + esc(x)).join("\n")
+  const head = p.side === "buy" ? `🟡 <b>PROPOSTA · COMPRA ${esc(p.symbol)}</b>` : `🟠 <b>PROPOSTA · VENDI ${esc(p.symbol)}</b> · ${esc(p.reason)}`
+  const text = `${head}
+${esc(c.quantita ?? "")}
+${esc(c.rischio ?? "")}
+Costi: ${esc(c.costi ?? "—")}
+
+<b>Fonte</b>: ${esc(c.fonte ?? "—")}
+<b>Strategia</b>: ${esc(c.strategia ?? "—")}
+<b>Fatti</b>
+${list(c.fatti)}${(c.ipotesi ?? []).length ? `\n<b>Ipotesi</b>\n${list(c.ipotesi)}` : ""}
+<b>Cosa annulla il segnale</b>
+${list(c.controtesi)}
+<b>Cosa non so</b>
+${list(c.mancano)}
+
+Nessun ordine parte senza il tuo tocco. Alla conferma ricontrollo saldo, prezzo e limiti. Scade alle ${hm(p.expires)}.`
+  await telegram(ctx, text.slice(0, 3900), { inline_keyboard: [[{ text: "✅ Approva", callback_data: `ok:${p.id}` }, { text: "❌ Rifiuta", callback_data: `no:${p.id}` }]] })
 }
 
 async function buildClient(ctx: ActionCtx): Promise<RevolutX> {
@@ -143,10 +172,67 @@ export const runTurn = internalAction({
       }
       await ctx.runMutation(internal.store.saveTurn, { state: JSON.stringify(state), control: JSON.stringify(control), base, office: JSON.stringify(snap) })
       if (office.events.length) await telegram(ctx, `🐺 <b>${esc(config.company)}</b>\n\n${office.events.join("\n\n")}`)
+      for (const p of office.newProposals) await sendProposal(ctx, p)
       return { ok: true, mode: office.mode }
     } finally {
       await ctx.runMutation(internal.store.lock, { now, release: true })
     }
+  },
+})
+
+// ------------------------------------------------------------- conferma del titolare e allineamento
+/** Esegue (o rifiuta) una proposta. Unico punto da cui parte un ordine LIVE fuori da "/chiudi conferma". */
+export const decideInternal = internalAction({
+  args: { id: v.string(), approve: v.boolean() },
+  handler: async (ctx, { id, approve }): Promise<{ ok: boolean; text: string }> => {
+    const now = Math.floor(Date.now() / 1000)
+    if (!(await ctx.runMutation(internal.store.lock, { now }))) return { ok: false, text: "Turno in corso: riprova tra un minuto (la proposta resta valida fino alla scadenza)." }
+    let r: { ok: boolean; text: string }
+    try {
+      const { config, control, state } = await ctx.runQuery(internal.store.readAll, {})
+      const base = JSON.stringify(control)
+      const persist = async () => { await ctx.runMutation(internal.store.saveTurn, { state: JSON.stringify(state), control: JSON.stringify(control), base }) }
+      const office = new Office(await buildClient(ctx), config, control, state, now, { persist, uuid: randomUUID })
+      try { r = await office.decide(id, approve) } catch (e: any) { r = { ok: false, text: `Errore, nessun ordine certo: ${e?.message ?? e}` } }
+      await persist()
+      if (office.events.length) await telegram(ctx, `🐺 <b>${esc(config.company)}</b>\n\n${office.events.join("\n\n")}`)
+    } finally {
+      await ctx.runMutation(internal.store.lock, { now, release: true })
+    }
+    if (approve) await ctx.runAction(internal.desk.runTurn, {}) // aggiorna saldo, posizioni e sala con i dati veri
+    return r
+  },
+})
+export const decideProposal = action({
+  args: { id: v.string(), approve: v.boolean() },
+  handler: async (ctx, a): Promise<{ ok: boolean; text: string }> => {
+    await requireOwner(ctx)
+    const r: { ok: boolean; text: string } = await ctx.runAction(internal.desk.decideInternal, a)
+    await telegram(ctx, `${r.ok ? "✅" : "ℹ️"} ${esc(r.text)} (dal sito)`)
+    return r
+  },
+})
+/** Solo su comando del titolare: il registro LIVE torna uguale al conto Revolut X. */
+export const alignBook = action({
+  args: {},
+  handler: async (ctx): Promise<{ notes: string[]; budget: number }> => {
+    await requireOwner(ctx)
+    const now = Math.floor(Date.now() / 1000)
+    if (!(await ctx.runMutation(internal.store.lock, { now }))) throw new Error("Turno in corso: riprova tra un minuto")
+    let out: { notes: string[]; budget: number }
+    try {
+      const { config, control, state } = await ctx.runQuery(internal.store.readAll, {})
+      const base = JSON.stringify(control)
+      const office = new Office(await buildClient(ctx), config, control, state, now, { uuid: randomUUID })
+      out = await office.alignToBroker()
+      await ctx.runMutation(internal.store.saveTurn, { state: JSON.stringify(state), control: JSON.stringify(control), base })
+      await ctx.runMutation(internal.store.adminConfig, { patch: JSON.stringify({ budget_eur: out.budget }) })
+    } finally {
+      await ctx.runMutation(internal.store.lock, { now, release: true })
+    }
+    await telegram(ctx, `🔄 <b>Registro allineato al conto Revolut X</b>\n${out.notes.length ? out.notes.map((n) => "• " + esc(n)).join("\n") : "Nessuna differenza."}\nBudget LIVE ora ${out.budget.toFixed(2)} €.`)
+    await ctx.runAction(internal.desk.runTurn, {})
+    return out
   },
 })
 
@@ -348,7 +434,7 @@ async function registerWebhook(ctx: ActionCtx, token: string) {
   await putSecret(ctx, "telegram_hook", secret)
   const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
     method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000),
-    body: JSON.stringify({ url: `${site}/telegram`, secret_token: secret, allowed_updates: ["message"], drop_pending_updates: true }),
+    body: JSON.stringify({ url: `${site}/telegram`, secret_token: secret, allowed_updates: ["message", "callback_query"], drop_pending_updates: true }),
   })
   const j: any = await r.json().catch(() => ({}))
   if (!j.ok) throw new Error(`Telegram non accetta il collegamento dei comandi (${j.description ?? r.status})`)
@@ -388,7 +474,8 @@ const AIUTO = `🐺 <b>Comandi Wolf Street</b>
 /riprendi — riattiva gli acquisti
 /chiudi — vende tutto e mette in pausa (chiede conferma)
 
-LIVE e kill switch solo dal sito, per sicurezza.`
+In LIVE ogni acquisto e vendita arriva come proposta con i pulsanti ✅ Approva / ❌ Rifiuta: senza il tuo tocco non parte nessun ordine.
+LIVE, kill switch e "Allinea al conto" solo dal sito, per sicurezza.`
 
 function statoText(o: any, c: any): string {
   if (!o) return "Nessun turno ancora eseguito."
@@ -413,9 +500,21 @@ export const telegramUpdate = internalAction({
   handler: async (ctx, { secret, body }) => {
     const hook = await getSecret(ctx, "telegram_hook")
     if (!hook || secret.length !== hook.length || !timingSafeEqual(Buffer.from(secret), Buffer.from(hook))) return
-    let msg: any
-    try { msg = JSON.parse(body)?.message } catch { return }
+    let msg: any, cb: any
+    try { const u = JSON.parse(body); msg = u?.message; cb = u?.callback_query } catch { return }
     const chat = await getSecret(ctx, "telegram_chat")
+    if (cb) { // pulsanti Approva / Rifiuta: solo dalla chat del titolare
+      if (!chat || String(cb.from?.id) !== chat || String(cb.message?.chat?.id) !== chat) return
+      const m = /^(ok|no):([\w-]{8,64})$/.exec(String(cb.data ?? ""))
+      await tgCall(ctx, "answerCallbackQuery", { callback_query_id: cb.id, text: m ? (m[1] === "ok" ? "Controllo e invio…" : "Rifiutata") : "Pulsante non valido" })
+      if (!m) return
+      await tgCall(ctx, "editMessageReplyMarkup", { chat_id: chat, message_id: cb.message.message_id, reply_markup: { inline_keyboard: [] } })
+      try {
+        const r: any = await ctx.runAction(internal.desk.decideInternal, { id: m[2], approve: m[1] === "ok" })
+        await telegram(ctx, `${r.ok ? "✅" : "ℹ️"} ${esc(r.text)}`)
+      } catch (e: any) { await telegram(ctx, `⚠️ Decisione non applicata: ${esc(e?.message ?? e)}`) }
+      return
+    }
     if (!msg?.chat || !chat || String(msg.chat.id) !== chat) return // solo la chat del titolare
     const text = String(msg.text ?? "").trim().toLowerCase().replace(/@\w+/, "")
     const [cmd, arg] = text.split(/\s+/)

@@ -1,9 +1,12 @@
 // WOLF STREET CAPITAL · un turno dell'ufficio (porting 1:1 di bot/office.py).
-//   SISTEMA  modalità effettiva (lib/safety) e riconciliazione degli ordini LIVE incerti
+//   SISTEMA  infrastruttura: modalità effettiva (lib/safety), registro, ordini LIVE incerti
+//   SCOUT    controllore dati: saldo confermato dal broker, registro = conto, prezzi e candele freschi
 //   TRADER   posizioni aperte: stop, target, trailing, trend, chiusura manuale
 //   ANALISTA scansione su candele chiuse e fresche
-//   RISK     limiti giornalieri/settimanali, drawdown, esposizione, dati mancanti, veto IA
-//   TRADER   esecuzione: SHADOW registra, PAPER simula, LIVE invia ordini veri
+//   RISK     limiti giornalieri/settimanali, drawdown, esposizione, dati mancanti, veto IA (solo riduce o blocca)
+//   TRADER   esecuzione: SHADOW registra, PAPER simula, LIVE prepara una PROPOSTA che parte solo
+//            dopo la conferma del titolare (sito o Telegram), ricontrollando saldo, prezzo e limiti.
+//   Se un passaggio fallisce il flusso si ferma: dato assente o vecchio = non operare.
 // Nessun I/O diretto: client di mercato, salvataggio e IA vengono iniettati.
 import * as safety from "./safety"
 import * as st from "./strategy"
@@ -14,6 +17,11 @@ export const MIN_CANDLES = 220
 const PENDING_GIVE_UP_S = 15 * 60
 const DEFINITE_REJECT = [400, 401, 403, 404, 409, 422] // l'API ha risposto: l'ordine NON esiste
 export const FINAL_STATES = ["filled", "cancelled", "canceled", "rejected", "replaced"]
+export const STRATEGY_VERSION = "pullback-trend 4h v1"
+export const PROPOSAL_TTL_S = 25 * 60 // una proposta vale fino al turno successivo
+export const MAX_DRIFT_PCT = 0.5 // alla conferma il prezzo d'acquisto non può essere salito oltre questa %
+const DESYNC_QTY = 0.98 // sul conto meno del 98% della quantità in registro = posizione non più lì
+const DESYNC_EUR = 0.5 // sul conto mancano più di 0,50 € rispetto al registro
 
 export type Ticker = { bid?: string; ask?: string; last_price?: string; price_change_24h?: string }
 export interface MarketClient {
@@ -37,7 +45,12 @@ export type Book = {
   daily: { date: string; realized: number }; weekly: { week: string; realized: number }
   peak: number; cooldown: Record<string, number>; fees: number; eq_v2?: boolean
 }
-export type State = { books?: { paper?: Book; live?: Book }; log?: any[]; runs?: number; last_run?: number; pending_orders?: any[]; shadow?: any[] }
+export type Proposal = {
+  id: string; side: "buy" | "sell"; symbol: string; status: "in attesa" | "rifiutata" | "scaduta" | "annullata" | "eseguita" | "fallita"
+  created: number; expires: number; decided?: number; ref_price: number; amount_eur?: number; qty?: number
+  reason: string; score?: number; atr?: number; why?: string; result?: string; contract: Record<string, any>
+}
+export type State = { books?: { paper?: Book; live?: Book }; log?: any[]; runs?: number; last_run?: number; pending_orders?: any[]; shadow?: any[]; proposals?: Proposal[]; desync_seen?: string }
 export type AiReview = (sig: Signal, cfg: Cfg) => Promise<{ verdict: string; reason: string } | null>
 
 export const emptyBook = (start: number): Book => ({
@@ -50,6 +63,24 @@ const g6 = (v: number) => Number(v.toPrecision(6)).toString()
 export const toDash = (s: string) => s.replace("/", "-").toUpperCase()
 export const orderStatus = (o: any) => String(o?.status ?? o?.state ?? "").toLowerCase()
 export const esc = (t: unknown) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+/** Totale di una valuta sul conto (disponibile + riservato). */
+export const balTotal = (bal: Record<string, any>, cur: string) => {
+  const b = bal?.[cur]
+  if (!b) return 0
+  return b.total !== undefined ? num(b.total) : num(b.available) + num(b.reserved)
+}
+/** Differenze tra registro LIVE e conto reale: posizioni che sul conto non ci sono più, EUR mancanti. */
+export function desyncOf(book: Book, bal: Record<string, any>): string[] {
+  const out: string[] = []
+  for (const [sym, pos] of Object.entries(book.positions)) {
+    const base = sym.split("-")[0], have = balTotal(bal, base)
+    if (have < pos.qty * DESYNC_QTY) out.push(`${sym}: sul conto ${have} ${base}, nel registro ${pos.qty}`)
+  }
+  const eurHave = balTotal(bal, "EUR")
+  if (eurHave + DESYNC_EUR < book.cash) out.push(`EUR: sul conto ${eurHave.toFixed(2)} €, nel registro ${book.cash.toFixed(2)} €`)
+  return out
+}
 
 function romeParts(t: number) {
   const d = new Date(t * 1000)
@@ -176,7 +207,12 @@ export class Office {
   persist: () => Promise<void>; ai: AiReview; uuid: () => string; opts: OfficeOpts
   mode: string; liveBlocks: string[]; exitsLive: boolean
   paper: Book; live: Book; book: Book | null; journal: Journal
-  stats = { analyst: { scanned: 0, candidates: 0, ai: 0 }, risk: { checked: 0, blocked: 0, last: "" }, trader: { buys: 0, sells: 0, blocked: 0, shadow: 0 } }
+  stats = { analyst: { scanned: 0, candidates: 0, ai: 0 }, risk: { checked: 0, blocked: 0, last: "" }, trader: { buys: 0, sells: 0, blocked: 0, shadow: 0, proposed: 0 } }
+  bal: Record<string, any> | null = null // saldo confermato da Revolut X in questo turno
+  scoutStop: string | null = null // motivo per cui niente ordini LIVE in questo turno
+  scoutInfo: { checked_at: number | null; desync: string[]; prices_ok: number; prices_n: number; candles_ok: number; stale: string[] } =
+    { checked_at: null, desync: [], prices_ok: 0, prices_n: 0, candles_ok: 0, stale: [] }
+  newProposals: Proposal[] = []
 
   constructor(c: MarketClient, cfg: Cfg, ctl: safety.Control, state: State, now: number, opts: OfficeOpts = {}) {
     this.c = c; this.ctl = ctl; this.state = state; this.now = now; this.opts = opts
@@ -251,6 +287,10 @@ export class Office {
     const paperBroker = new PaperBroker(cfg.taker_fee)
 
     if (this.journal.items.length) await this.reconcile(tickers)
+    this.expireProposals()
+    const prOk = pairs.filter((s) => tickers[s]?.bid && tickers[s]?.ask)
+    Object.assign(this.scoutInfo, { prices_ok: prOk.length, prices_n: pairs.length })
+    if (this.mode === "live" || Object.keys(this.live.positions).length) await this.scout()
 
     const market: Record<string, [st.Candle[], st.Computed]> = {}
     for (const sym of pairs) {
@@ -263,10 +303,22 @@ export class Office {
       }
     }
 
+    const stale: string[] = []
+    for (const sym of pairs) {
+      const cs = market[sym]?.[0]
+      const age = cs?.length ? (this.now - (cs[cs.length - 1].t + cfg.interval_min * 60)) / 60 : Infinity
+      if (!cs || cs.length < MIN_CANDLES || age > cfg.interval_min * 1.5) stale.push(sym)
+    }
+    Object.assign(this.scoutInfo, { candles_ok: pairs.length - stale.length, stale })
+    this.log("SCOUT", `Prezzi bid/ask ${prOk.length}/${pairs.length} · candele 4h aggiornate ${pairs.length - stale.length}/${pairs.length}` +
+      (stale.length ? ` · vecchie o incomplete: ${stale.join(", ")} (niente ingressi lì)` : ""), stale.length || prOk.length < pairs.length ? "warn" : "info")
+
     // TRADER · posizioni aperte (LIVE prima: soldi veri)
     const panic = !!this.ctl.panic_close
     if (Object.keys(this.live.positions).length) {
-      if (liveBroker && this.exitsLive) await this.manage(this.live, liveBroker, tickers, market, panic)
+      if (this.scoutStop) {
+        this.log("TRADER", `Posizioni LIVE: nessuna vendita in questo turno → ${this.scoutStop}`, "warn")
+      } else if (liveBroker && this.exitsLive) await this.manage(this.live, liveBroker, tickers, market, panic)
       else {
         this.log("TRADER", `${Object.keys(this.live.positions).length} posizioni LIVE aperte NON gestite (kill switch attivo): controllale su Revolut X.`, "error")
         this.errors.push("Posizioni LIVE non gestite: kill switch attivo")
@@ -325,12 +377,15 @@ export class Office {
       this.stats.risk.checked++
       if (gate) { this.blocked(sym, gate); continue }
       if (ref.positions[sym] || this.journal.items.some((o) => o.symbol === sym)) continue
-      if (Object.keys(ref.positions).length >= cfg.max_open_positions) { this.blocked(sym, `già ${cfg.max_open_positions} posizioni aperte`); continue }
+      if (this.mode === "live" && this.pending(sym, "buy")) { this.log("RISK", `${sym}: proposta d'acquisto già in attesa della tua conferma`); continue }
+      const pendingBuys = this.mode === "live" ? this.pendingAll("buy") : []
+      if (Object.keys(ref.positions).length + pendingBuys.length >= cfg.max_open_positions) { this.blocked(sym, `già ${cfg.max_open_positions} posizioni aperte o proposte`); continue }
       if ((ref.cooldown[sym] ?? 0) > this.now) { this.blocked(sym, `in pausa dopo uno stop fino alle ${hhmm(ref.cooldown[sym])}`); continue }
       const exposure = Object.values(ref.positions).reduce((s, p) => s + p.cost, 0)
       let cash = ref.cash
       if (this.mode === "live") {
-        try { cash = Math.min(cash, num((await this.c.balances()).EUR?.available)) } catch (e: any) { this.blocked(sym, `saldo EUR non leggibile (${e?.message ?? e})`); continue }
+        if (!this.bal) { this.blocked(sym, "saldo EUR non confermato da Revolut X"); continue }
+        cash = Math.min(cash, num(this.bal.EUR?.available)) - pendingBuys.reduce((s, p) => s + (p.amount_eur ?? 0), 0)
       }
       let [amount, why] = st.sizePosition(sig, cash, eq, cfg)
       const room = (eq * cfg.max_exposure_pct) / 100 - exposure
@@ -348,7 +403,10 @@ export class Office {
         if (verdict.verdict !== "APPROVA") { this.stats.risk.blocked++; this.stats.risk.last = `${sym}: veto IA`; continue }
       }
       this.stats.risk.last = `${sym}: via libera`
+      const riskEur = sig.ind.atr && sig.price ? (amount * cfg.stop_atr * sig.ind.atr) / sig.price : null
+      this.log("RISK", `${sym}: controlli superati · importo ${eur(amount)}${riskEur !== null ? ` · perdita massima allo stop ≈ ${eur(riskEur)}` : ""} · ${why}`)
       if (this.mode === "shadow") { this.shadow(sig, amount, why, tickers[sym] ?? {}); continue }
+      if (this.mode === "live") { this.proposeBuy(sig, amount, why, tickers[sym] ?? {}, market[sym]?.[0] ?? []); continue }
       const broker = this.mode === "live" ? liveBroker! : paperBroker
       if (!(await this.buy(book!, broker, sig, amount, tickers[sym], why))) break
       eq = Office.equity(book!, tickers)
@@ -371,6 +429,7 @@ export class Office {
     b.peak = Math.max(b.peak ?? eq, eq)
     const dd = b.peak ? ((b.peak - eq) / b.peak) * 100 : 0
     if (this.ctl.kill_switch) return "Kill switch attivo"
+    if (b === this.live && this.scoutStop) return `Scout: ${this.scoutStop}`
     if (this.ctl.paused) return "Ufficio in pausa" + (this.ctl.pause_reason ? ` (${this.ctl.pause_reason})` : "")
     if (this.journal.items.length) return "Ordine LIVE in sospeso da verificare"
     if (daily.realized <= -cfg.daily_loss_limit_eur) return `Stop giornaliero raggiunto (${eur(daily.realized)}): niente acquisti fino a mezzanotte`
@@ -382,6 +441,190 @@ export class Office {
       return r
     }
     return null
+  }
+
+  // ------------------------------------------------------------ SCOUT · controllore dati
+  /** Saldo confermato dal broker e registro = conto. Se no: niente ordini LIVE in questo turno. */
+  async scout() {
+    try { this.bal = await this.c.balances() } catch (e: any) {
+      this.scoutStop = `Revolut X non conferma il saldo (${e?.message ?? e})`
+      this.errors.push(this.scoutStop)
+      this.log("SCOUT", `${this.scoutStop}: mi fermo, nessuna proposta e nessuna vendita LIVE in questo turno.`, "error")
+      return
+    }
+    this.scoutInfo.checked_at = this.now
+    const desync = desyncOf(this.live, this.bal)
+    this.scoutInfo.desync = desync
+    const coins = Object.keys(this.live.positions).map((s) => s.split("-")[0])
+    this.log("SCOUT", `Saldo confermato da Revolut X alle ${hhmm(this.now)} · EUR disponibili ${eur(num(this.bal.EUR?.available))}` +
+      coins.map((c) => ` · ${c} ${balTotal(this.bal!, c)}`).join(""))
+    if (!desync.length) { this.state.desync_seen = ""; return }
+    this.scoutStop = "registro e conto Revolut X non coincidono"
+    const msg = `Registro e conto non coincidono → ${desync.join(" · ")}. Probabile vendita o prelievo fatto fuori dal desk. ` +
+      `Nessuna proposta e nessuna vendita finché non allinei il registro (Comandi → Allinea al conto).`
+    this.errors.push(`Scout: ${desync.join(" · ")}`)
+    this.log("SCOUT", msg, "error")
+    const key = desync.join("|")
+    if (this.state.desync_seen !== key) { // un solo avviso per la stessa differenza
+      this.state.desync_seen = key
+      this.events.push(`🛑 <b>Scout: registro e conto non coincidono</b>\n${desync.map((d) => "• " + esc(d)).join("\n")}\nNessun ordine finché non premi <b>Allinea al conto</b> sul sito.`)
+    }
+  }
+
+  // ------------------------------------------------------------ PROPOSTE (LIVE: parte solo con la tua conferma)
+  get proposals(): Proposal[] { return (this.state.proposals = this.state.proposals ?? []) }
+  pending(sym: string, side: "buy" | "sell") { return this.proposals.find((p) => p.status === "in attesa" && p.symbol === sym && p.side === side) }
+  pendingAll(side: "buy" | "sell") { return this.proposals.filter((p) => p.status === "in attesa" && p.side === side) }
+  expireProposals() {
+    for (const p of this.proposals) if (p.status === "in attesa" && this.now > p.expires) {
+      p.status = "scaduta"; p.decided = this.now
+      this.log("TRADER", `Proposta ${p.side === "buy" ? "d'acquisto" : "di vendita"} ${p.symbol} scaduta senza conferma: nessun ordine inviato.`)
+    }
+    this.state.proposals = this.proposals.slice(-30)
+  }
+  private addProposal(p: Proposal) {
+    this.proposals.push(p); this.state.proposals = this.proposals.slice(-30)
+    this.newProposals.push(p); this.stats.trader.proposed++
+  }
+
+  proposeBuy(sig: Signal, amount: number, why: string, tk: Ticker, cs: st.Candle[]) {
+    const cfg = this.cfg, px = num(tk.ask) || sig.price, a = sig.ind.atr
+    const stop = px - cfg.stop_atr * a, tp = px + cfg.tp_atr * a
+    const riskEur = (amount * (px - stop)) / px
+    const spread = sig.spread_pct ?? null
+    const costs = amount * cfg.taker_fee * 2 + (spread !== null ? (amount * spread) / 100 : 0)
+    const last = cs[cs.length - 1]
+    const closed = this.live.closed.length
+    const p: Proposal = {
+      id: this.uuid(), side: "buy", symbol: sig.symbol, status: "in attesa", created: this.now, expires: this.now + PROPOSAL_TTL_S,
+      ref_price: px, amount_eur: amount, reason: "INGRESSO", score: sig.score, atr: a, why,
+      contract: {
+        mercato: "Revolut X · spot (niente leva)",
+        fonte: `Revolut X: candele 4h chiuse fino alle ${last ? hhmm(last.t + cfg.interval_min * 60) : "—"}, bid/ask letti alle ${hhmm(this.now)}`,
+        strategia: `${STRATEGY_VERSION} · soglia ${cfg.min_score} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`,
+        fatti: [`Punteggio regole ${sig.score}/100`, ...sig.reasons.slice(0, 4),
+          `RSI ${g6(sig.ind.rsi ?? NaN)} · ADX ${g6(sig.ind.adx ?? NaN)} · ATR ${g6(sig.ind.atr_pct ?? NaN)}%`],
+        ipotesi: ["Il trend di fondo 4h resta rialzista (EMA50 sopra EMA200)", "La correzione in corso si esaurisce vicino ai livelli attuali"],
+        controtesi: [`Chiusura sotto lo stop ${g6(stop)} (−${(((px - stop) / px) * 100).toFixed(1)}%)`, "EMA50 che scende sotto EMA200: trend rotto, uscita",
+          `Alla conferma il prezzo è salito oltre ${g6(px * (1 + MAX_DRIFT_PCT / 100))}: la proposta si annulla da sola`],
+        costi: `≈ ${eur(costs)} (commissioni entrata+uscita${spread !== null ? ` + spread ${spread.toFixed(3)}%` : ""})`,
+        quantita: `${eur(amount)} a mercato ≈ ${g6(amount / px)} ${sig.symbol.split("-")[0]} · stop ${g6(stop)} · target ${g6(tp)}`,
+        rischio: `perdita massima allo stop ≈ ${eur(riskEur)} (senza slippage) · ${why}`,
+        mancano: ["Nessuna fonte di notizie collegata", ...(this.opts.aiEnabled ? [] : ["Revisione IA non attiva"]),
+          `Confidenza non calibrata: solo ${closed} operazioni LIVE chiuse, nessuna percentuale mostrata`],
+      },
+    }
+    this.addProposal(p)
+    this.log("TRADER", `PROPOSTA acquisto ${sig.symbol} ${eur(amount)} @ ≈${g6(px)} · stop ${g6(stop)} · in attesa della tua conferma (scade alle ${hhmm(p.expires)})`)
+  }
+
+  proposeSell(sym: string, pos: Position, tk: Ticker, reason: string) {
+    const bid = num(tk.bid)
+    if (this.pending(sym, "sell")) { this.log("TRADER", `${sym}: ${reason} · vendita già proposta, in attesa della tua conferma`, "warn"); return }
+    const base = sym.split("-")[0], have = num(this.bal?.[base]?.available)
+    const qty = Math.min(pos.qty, have)
+    if (qty <= 0) { this.log("TRADER", `${sym}: ${reason} ma sul conto non ci sono ${base} disponibili: nessuna proposta di vendita`, "warn"); return }
+    const pnl = qty * bid * (1 - this.cfg.taker_fee) - pos.cost * (qty / pos.qty)
+    const p: Proposal = {
+      id: this.uuid(), side: "sell", symbol: sym, status: "in attesa", created: this.now, expires: this.now + PROPOSAL_TTL_S,
+      ref_price: bid, qty, reason,
+      contract: {
+        mercato: "Revolut X · spot", fonte: `Revolut X: bid letto alle ${hhmm(this.now)}, saldo ${base} confermato alle ${hhmm(this.now)}`,
+        strategia: STRATEGY_VERSION,
+        fatti: [`Motivo d'uscita: ${reason}`, `Entrata ${g6(pos.entry)} · ora ${g6(bid)} (${((bid / pos.entry - 1) * 100).toFixed(2)}%)`, `Stop ${g6(pos.stop)} · target ${g6(pos.tp)}`],
+        ipotesi: [], controtesi: ["Se non confermi, la posizione resta aperta e la proposta si ripete al prossimo turno"],
+        costi: `≈ ${eur(qty * bid * this.cfg.taker_fee)} di commissione`,
+        quantita: `${g6(qty)} ${base} a mercato (disponibili sul conto ${have})`,
+        rischio: `risultato stimato ${pnl >= 0 ? "+" : ""}${eur(pnl)}`,
+        mancano: ["Il prezzo d'esecuzione può differire dal bid letto"],
+      },
+    }
+    this.addProposal(p)
+    this.log("TRADER", `PROPOSTA vendita ${sym} (${reason}) ${g6(qty)} @ ≈${g6(bid)} · in attesa della tua conferma`, "warn")
+  }
+
+  /** Decisione del titolare. Prima di inviare: Scout di nuovo (saldo, prezzo), limiti, prezzo non scappato. */
+  async decide(id: string, approve: boolean): Promise<{ ok: boolean; text: string }> {
+    const p = this.proposals.find((x) => x.id === id)
+    if (!p) return { ok: false, text: "Proposta non trovata" }
+    const what = `${p.side === "buy" ? "acquisto" : "vendita"} ${p.symbol}`
+    if (p.status !== "in attesa") return { ok: false, text: `Proposta di ${what} già ${p.status}` }
+    p.decided = this.now
+    if (!approve) { p.status = "rifiutata"; this.log("TRADER", `Proposta di ${what} rifiutata dal titolare: nessun ordine.`); return { ok: true, text: `Rifiutata: nessun ordine per ${p.symbol}.` } }
+    if (this.now > p.expires) { p.status = "scaduta"; return { ok: false, text: `Proposta di ${what} scaduta: nessun ordine.` } }
+    const stop = (why: string) => {
+      p.status = "annullata"; p.result = why
+      this.log("TRADER", `Proposta di ${what} annullata prima dell'invio: ${why}`, "warn")
+      return { ok: false, text: `Annullata, nessun ordine: ${why}` }
+    }
+    try { this.bal = await this.c.balances() } catch (e: any) { return stop(`Revolut X non conferma il saldo (${e?.message ?? e})`) }
+    const desync = desyncOf(this.live, this.bal)
+    if (desync.length) return stop(`registro e conto non coincidono (${desync.join(" · ")})`)
+    let tk: Ticker
+    try { tk = (await this.c.tickers([p.symbol]))[p.symbol] ?? {} } catch (e: any) { return stop(`prezzo non leggibile (${e?.message ?? e})`) }
+    if (!tk.bid || !tk.ask) return stop("prezzo bid/ask non disponibile")
+    const broker = new LiveBroker(this.c, await this.c.pairs(), this.cfg.taker_fee, this.journal, this.uuid)
+    const base = p.symbol.split("-")[0]
+    if (p.side === "buy") {
+      if (this.mode !== "live") return stop(`LIVE non attivo (${this.liveBlocks.join("; ") || this.mode})`)
+      const g = this.gate(this.live, Office.equity(this.live, { [p.symbol]: tk }))
+      if (g) return stop(g)
+      if (this.live.positions[p.symbol]) return stop("posizione già aperta")
+      const ask = num(tk.ask)
+      if (ask > p.ref_price * (1 + MAX_DRIFT_PCT / 100)) return stop(`prezzo salito a ${g6(ask)} (+${((ask / p.ref_price - 1) * 100).toFixed(2)}% dalla proposta, massimo ${MAX_DRIFT_PCT}%)`)
+      const avail = num(this.bal.EUR?.available)
+      const amount = Math.floor(Math.min(p.amount_eur ?? 0, avail, this.live.cash) * 100) / 100
+      if (amount < (this.cfg.min_trade_eur ?? 5)) return stop(`EUR disponibili ${eur(avail)}: sotto il minimo di ${eur(this.cfg.min_trade_eur ?? 5)}`)
+      const sig = { symbol: p.symbol, score: p.score ?? 0, price: p.ref_price, ind: { atr: p.atr ?? ask * 0.02 } } as unknown as Signal
+      const ok = await this.buy(this.live, broker, sig, amount, tk, `${p.why ?? ""} · confermato dal titolare`)
+      p.status = ok ? "eseguita" : "fallita"
+      p.result = ok ? `Comprato per ${eur(this.live.positions[p.symbol]?.cost ?? amount)}` : (this.errors.at(-1) ?? "ordine non riuscito")
+    } else {
+      if (!this.exitsLive) return stop("kill switch attivo")
+      const pos = this.live.positions[p.symbol]
+      if (!pos) return stop("posizione non più nel registro")
+      if (num(this.bal[base]?.available) <= 0) return stop(`sul conto non ci sono ${base} disponibili`)
+      await this.sell(this.live, broker, p.symbol, pos, tk, `${p.reason} · confermato dal titolare`)
+      const ok = !this.live.positions[p.symbol]
+      p.status = ok ? "eseguita" : "fallita"
+      p.result = ok ? "Venduto" : (this.errors.at(-1) ?? "vendita non riuscita")
+    }
+    return { ok: p.status === "eseguita", text: `${p.status === "eseguita" ? "Eseguito" : "Non riuscito"}: ${what} · ${p.result}` }
+  }
+
+  /** Solo su comando del titolare: riporta il registro LIVE al saldo reale di Revolut X.
+   *  Posizioni non più sul conto → chiuse come "uscita fuori dal desk" (prezzo stimato sul bid);
+   *  EUR in più o in meno → versamento o prelievo (non è un guadagno né una perdita). Ritorna il nuovo budget. */
+  async alignToBroker(): Promise<{ notes: string[]; budget: number }> {
+    const bal = await this.c.balances()
+    const syms = Object.keys(this.live.positions)
+    const tk = syms.length ? await this.c.tickers(syms) : {}
+    const notes: string[] = []
+    for (const sym of syms) {
+      const pos = this.live.positions[sym], base = sym.split("-")[0], have = balTotal(bal, base)
+      if (have >= pos.qty * DESYNC_QTY) continue
+      const bid = num(tk[sym]?.bid) || pos.entry
+      if (have <= 0) {
+        const proceeds = pos.qty * bid * (1 - this.cfg.taker_fee)
+        this.close(this.live, sym, pos, bid, proceeds, pos.qty * bid * this.cfg.taker_fee, "USCITA FUORI DAL DESK (prezzo stimato)", true)
+        notes.push(`${sym}: non più sul conto, chiusa come uscita fuori dal desk a ≈${g6(bid)} (stima)`)
+      } else {
+        const f = have / pos.qty
+        pos.cost *= f; pos.qty = have
+        notes.push(`${sym}: quantità ridotta a ${have} ${base} come sul conto`)
+      }
+    }
+    const d = balTotal(bal, "EUR") - this.live.cash
+    if (Math.abs(d) >= 0.005) {
+      this.live.start += d; this.live.cash += d
+      this.live.equity = (this.live.equity ?? []).map(([t, v]) => [t, Math.round((v + d) * 1e4) / 1e4] as [number, number])
+      this.live.peak = (this.live.peak ?? this.live.start - d) + d
+      notes.push(`EUR: ${d > 0 ? "versamento" : "prelievo"} di ${eur(Math.abs(d))} registrato (non è un risultato di trading)`)
+    }
+    this.state.desync_seen = ""
+    const budget = Math.max(0.01, Math.round(this.live.start * 100) / 100)
+    this.log("SCOUT", notes.length ? `Registro allineato al conto su comando del titolare: ${notes.join(" · ")}` : "Registro già allineato al conto: nessuna modifica.", notes.length ? "warn" : "info")
+    return { notes, budget }
   }
 
   blocked(sym: string, why: string) {
@@ -398,7 +641,8 @@ export class Office {
       let e50: number | null = null, e200: number | null = null
       if (market[sym]?.[0].length) { const s = market[sym][1]; e50 = s.ema50[s.ema50.length - 1]; e200 = s.ema200[s.ema200.length - 1] }
       const ex: [string, number] | null = panic ? ["CHIUSURA MANUALE", bid] : st.checkExit(pos, { o: bid, h: bid, l: bid, c: bid }, e50, e200, this.now, this.cfg)
-      if (ex) { if (!(await this.sell(b, broker, sym, pos, t, ex[0]))) break }
+      if (ex && broker.live && !panic) this.proposeSell(sym, pos, t, ex[0])
+      else if (ex) { if (!(await this.sell(b, broker, sym, pos, t, ex[0]))) break }
       else this.log("TRADER", `Tengo ${sym} (${broker.live ? "LIVE" : "PAPER"}): ${((bid / pos.entry - 1) * 100).toFixed(2)}% · stop ${g6(pos.stop)} · target ${g6(pos.tp)}`)
     }
   }
@@ -547,12 +791,15 @@ export class Office {
       generated_at: this.now, company: cfg.company, desk: cfg.desk, mode: this.mode, requested_mode: this.ctl.mode ?? "shadow",
       live_blocks: this.liveBlocks, live_armed: !!this.ctl.live_armed, kill_switch: !!this.ctl.kill_switch, paused, pause_reason: this.ctl.pause_reason ?? "",
       pending_orders: this.journal.items.map((o) => ({ symbol: o.symbol, side: o.side, created_ms: o.created_ms })),
+      proposals: [...this.proposals].reverse().slice(0, 12),
+      scout: { ...this.scoutInfo, stop: this.scoutStop },
       ai_enabled: !!this.opts.aiEnabled, telegram: !!this.opts.telegram, runs: this.state.runs ?? 0,
       config: Object.fromEntries(keys.map((k) => [k, cfg[k]])),
       agents: [
+        { id: "scout", name: "Scout", role: "Controlla saldo sul broker, registro = conto, prezzi e candele freschi", status: this.scoutStop ? "STOP" : "VIGILE", metric: this.scoutInfo.candles_ok, unit: "coppie con dati freschi", detail: this.scoutStop ?? (this.scoutInfo.checked_at ? `Saldo confermato alle ${hhmm(this.scoutInfo.checked_at)}` : "Saldo non richiesto (niente LIVE)") },
         { id: "analyst", name: "Analista", role: "Scansiona il mercato su candele chiuse e propone gli ingressi", status: paused ? "IN PAUSA" : a.candidates ? "SEGNALE" : "SCANSIONE", metric: a.scanned, unit: "coppie analizzate", detail: best ? `Migliore: ${best.symbol} ${best.score}/100` : "Nessun dato", ai_reviews: a.ai },
         { id: "risk", name: "Risk", role: "Limiti di perdita, esposizione, dati mancanti, veto IA", status: paused ? "IN PAUSA" : r.blocked ? "BLOCCO" : "VIGILE", metric: r.checked, unit: "controlli", detail: r.last || "Nessun candidato in questo turno" },
-        { id: "trader", name: "Trader", role: "Ordini, stop, target e uscite", status: paused ? "IN PAUSA" : t.buys || t.sells || t.shadow ? "OPERATIVO" : "VIGILE", metric: view.positions.length, unit: "posizioni aperte", detail: `${t.buys} acquisti · ${t.sells} vendite · ${t.shadow} simulati in shadow · ${t.blocked} bloccati` },
+        { id: "trader", name: "Trader", role: "Prepara ordini e uscite; in LIVE li invia solo dopo la tua conferma", status: paused ? "IN PAUSA" : t.buys || t.sells || t.shadow ? "OPERATIVO" : "VIGILE", metric: view.positions.length, unit: "posizioni aperte", detail: `${t.proposed} proposte · ${t.buys} acquisti · ${t.sells} vendite · ${t.shadow} simulati in shadow · ${t.blocked} bloccati` },
       ],
       ...view, live_book: liveView, shadow: [...(this.state.shadow ?? []).slice(-30)].reverse(),
       signals: signals.map(({ ind, ...s }) => ({ ...s, rsi: ind.rsi ?? null, atr_pct: ind.atr_pct ?? null, adx: ind.adx ?? null, ema50: ind.ema50 ?? null, ema200: ind.ema200 ?? null })),

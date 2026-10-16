@@ -81,3 +81,25 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 .sala-more { margin: 4px 0 0; font-size: 11px; color: hsl(var(--faint)); }
 @media (max-width: 900px) { .sala-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .sala-roles { grid-template-columns: 1fr; } .sala-stage { height: 380px; } }
+/* ---------- proposte, Scout, infrastruttura ---------- */
+.sala-role.SCOUT { --rc: #5fd3d3; }
+.sala-error { margin: 0 0 4px; font-size: 12.5px; color: hsl(var(--down)); overflow-wrap: anywhere; }
+.sala-error time { font: 400 11px var(--mono); margin-right: 4px; }
+.sala-wait { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: hsl(var(--warn)); }
+.sala-infra { margin: 0 0 10px; font-size: 12px; color: hsl(var(--muted)); border-left: 3px solid hsl(var(--gold) / .6); padding: 4px 10px; overflow-wrap: anywhere; }
+.sala-infra b { color: hsl(var(--ink)); font-weight: 600; }
+.sala-infra.bad { border-left-color: hsl(var(--down)); color: hsl(var(--down)); }
+.props .prop { border: 1px solid hsl(var(--warn) / .6); border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: hsl(var(--warn-soft)); }
+.props .prop.sell { border-color: hsl(var(--down) / .6); background: hsl(var(--down-soft)); }
+.props .prop h3 { margin: 0 0 6px; font-size: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.props .prop-main { margin: 0 0 8px; font-size: 13px; line-height: 1.5; font-family: var(--mono); overflow-wrap: anywhere; }
+.props dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12.5px; }
+.props dt { color: hsl(var(--muted)); font-weight: 600; }
+.props dd { margin: 0; overflow-wrap: anywhere; }
+.props dd ul { margin: 0; padding-left: 16px; }
+.props .row { margin-top: 10px; gap: 8px; flex-wrap: wrap; }
+.prop-past { list-style: none; margin: 10px 0 0; padding: 0; font-size: 12px; color: hsl(var(--muted)); }
+.prop-past time { font-family: var(--mono); margin-right: 4px; }
+.align-box { border-color: hsl(var(--down) / .6) !important; }
+.align-box ul { margin: 0 0 8px; padding-left: 18px; font-family: var(--mono); font-size: 13px; }
+@media (max-width: 520px) { .props dl { grid-template-columns: 1fr; } .props dt { margin-top: 4px; } }

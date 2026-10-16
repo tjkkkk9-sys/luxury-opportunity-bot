@@ -203,6 +203,8 @@ function Ufficio({ D, keysReady, go }: { D: any; keysReady: boolean; go: (t: Tab
   const hasBook = D.kpi && Object.keys(D.kpi).length > 0
   return (
     <section className="view split">
+      <Allinea D={D} />
+      <Proposte D={D} />
       <div className="span2"><Room D={D} /></div>
       {hasBook ? <div className="span2"><Kpis k={D.kpi} c={D.config} /></div>
         : <article className="panel span2"><p className="note">{D.mode === "shadow" ? "In SHADOW il desk non ha un portafoglio: registra nel Diario shadow cosa avrebbe comprato." : "I numeri compaiono dopo il primo turno."}{!keysReady && <> <button className="link" onClick={() => go("comandi")}>Inserisci le chiavi</button></>}</p></article>}
@@ -378,6 +380,7 @@ function Comandi({ data, D }: { data: any; D: any }) {
   ]
   return (
     <section className="view split">
+      <Allinea D={D} />
       <article className="panel span2">
         <div className="ph"><h2>Sala comandi</h2><span className="eyebrow">modalità richiesta: {String(c.mode).toUpperCase()}</span></div>
         <div className="cmds">{btns.map(([id, b, s, cl]) => <button key={id} className={`btn ${cl}`} onClick={() => ask(id)}><b>{b}</b><span>{s}</span></button>)}</div>
@@ -704,6 +707,68 @@ function Room({ D }: { D: any }) {
   )
 }
 
+// ------------------------------------------------------------------ proposte LIVE: nessun ordine senza la tua conferma
+function Proposte({ D }: { D: any }) {
+  const decide = useAction(api.desk.decideProposal)
+  const [busy, setBusy] = useState("")
+  const [msg, setMsg] = useState("")
+  const now = Math.floor(Date.now() / 1000)
+  const all: any[] = D.proposals ?? []
+  const open = all.filter((p) => p.status === "in attesa" && p.expires > now)
+  const past = all.filter((p) => !open.includes(p)).slice(0, 4)
+  if (!all.length) return null
+  async function go(id: string, approve: boolean) {
+    setBusy(id); setMsg(approve ? "Ricontrollo saldo, prezzo e limiti, poi invio…" : "Rifiuto…")
+    try { const r: any = await decide({ id, approve }); setMsg(r.text) }
+    catch (e: any) { setMsg(String(e?.data ?? e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) }
+    setBusy("")
+  }
+  const L = ({ t, xs }: { t: string; xs: any }) => (Array.isArray(xs) && xs.length ? <><dt>{t}</dt><dd><ul>{xs.map((x: string) => <li key={x}>{x}</li>)}</ul></dd></> : null)
+  return (
+    <article className="panel span2 props">
+      <div className="ph"><h2>Proposte del Trader</h2><span className="eyebrow">{open.length ? `${open.length} in attesa della tua conferma` : "nessuna in attesa"}</span></div>
+      {open.map((p) => (
+        <div className={`prop ${p.side}`} key={p.id}>
+          <h3>{p.side === "buy" ? "Compra" : "Vendi"} {p.symbol}{p.side === "sell" && <span className="chip c-avoid">{p.reason}</span>}</h3>
+          <p className="prop-main">{p.contract?.quantita}<br />{p.contract?.rischio}<br />Costi: {p.contract?.costi}</p>
+          <dl>
+            <dt>Fonte</dt><dd>{p.contract?.fonte}</dd>
+            <dt>Strategia</dt><dd>{p.contract?.strategia}</dd>
+            <L t="Fatti" xs={p.contract?.fatti} /><L t="Ipotesi" xs={p.contract?.ipotesi} />
+            <L t="Cosa annulla il segnale" xs={p.contract?.controtesi} /><L t="Cosa non so" xs={p.contract?.mancano} />
+          </dl>
+          <p className="note">Scade alle {when(p.expires)}. Alla conferma ricontrollo saldo, prezzo (max +0,5%) e limiti; se qualcosa non torna annullo senza inviare.</p>
+          <div className="row"><button className="solid" disabled={!!busy} onClick={() => void go(p.id, true)}>Approva e invia</button><button className="ghost" disabled={!!busy} onClick={() => void go(p.id, false)}>Rifiuta</button></div>
+        </div>
+      ))}
+      {msg && <p className="note" role="status">{msg}</p>}
+      {past.length > 0 && <ul className="prop-past">{past.map((p) => <li key={p.id}><time>{when(p.created)}</time> {p.side === "buy" ? "Compra" : "Vendi"} {p.symbol} · <b>{p.status}</b>{p.result ? ` · ${p.result}` : ""}</li>)}</ul>}
+    </article>
+  )
+}
+function Allinea({ D }: { D: any }) {
+  const align = useAction(api.desk.alignBook)
+  const [ask, setAsk] = useState(false)
+  const [msg, setMsg] = useState("")
+  const sc = D.scout
+  if (!sc?.desync?.length) return null
+  async function go() {
+    setAsk(false); setMsg("Allineo il registro al conto…")
+    try { const r: any = await align({}); setMsg(r.notes.length ? r.notes.join(" · ") : "Nessuna differenza.") }
+    catch (e: any) { setMsg(String(e?.data ?? e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) }
+  }
+  return (
+    <article className="panel span2 align-box" role="alert">
+      <div className="ph"><h2>Scout: registro e conto non coincidono</h2><span className="eyebrow">nessun ordine finché non allinei</span></div>
+      <ul>{sc.desync.map((d: string) => <li key={d}>{d}</li>)}</ul>
+      <p className="note">Di solito succede quando vendi o prelevi dall'app Revolut. "Allinea al conto" registra le posizioni sparite come uscite fuori dal desk (prezzo stimato) e la differenza di euro come prelievo o versamento, poi porta il budget LIVE al saldo reale. Nessun ordine viene inviato.</p>
+      {!ask ? <button className="solid" onClick={() => setAsk(true)}>Allinea al conto</button>
+        : <div className="row"><button className="solid red" onClick={() => void go()}>Sì, allinea</button><button className="ghost" onClick={() => setAsk(false)}>Annulla</button></div>}
+      {msg && <p className="note" role="status">{msg}</p>}
+    </article>
+  )
+}
+
 // ------------------------------------------------------------------ sala operativa 3D (solo dati veri del backend)
 function Sala({ D }: { D: any }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -726,6 +791,8 @@ function Sala({ D }: { D: any }) {
   const modeCls = !S.connected ? "off" : S.killSwitch ? "bad" : S.liveConfirmed ? "live" : "idle"
   return (
     <section className="view split">
+      <Allinea D={D} />
+      <Proposte D={D} />
       <article className="panel span2 sala-wrap">
         <div className="ph"><h2>Sala operativa</h2><button className="ghost" onClick={nextView}>Cambia vista</button></div>
         <div className="sala-status" role="status">
@@ -734,6 +801,8 @@ function Sala({ D }: { D: any }) {
           <span>Prossimo turno: <b>{S.connected ? fmtWait(S.nextInS) : "—"}</b></span>
           {!S.connected && <span className="sala-reason">{S.reason}</span>}
         </div>
+        <p className={`sala-infra ${S.system.error ? "bad" : ""}`}><b>Sistema (infrastruttura, non un robot)</b> · {!S.connected ? "non connesso"
+          : S.system.error ? `errore: ${S.system.error.text}` : S.system.entries[0]?.text ?? "nessuna voce in questo turno"}</p>
         <div className="sala-stage">
           <canvas ref={canvasRef} className="sala-canvas" aria-label="Sala operativa 3D: le quattro postazioni del desk. Lo stato di ogni bot è scritto anche nelle schede qui sotto." />
           <div ref={tagsRef} className="sala-tags" aria-hidden="true" />
@@ -742,22 +811,26 @@ function Sala({ D }: { D: any }) {
         </div>
         <ul className="sala-roles" aria-live="polite" aria-label="Stato dei bot">
           {ROLE_IDS.map((id) => {
-            const r = S.roles[id], e = r.turnEntries[0] ?? null
+            const r = S.roles[id], e = r.turnEntries.find((x) => x.level !== "error") ?? null
             return (
               <li key={id} className={`sala-role ${id}`} data-status={r.status}>
                 <div className="sala-role-h"><b>{ROLE_INFO[id].title}</b><span className="sala-pill">{r.status}</span></div>
                 <p className="sala-job">{ROLE_INFO[id].job}</p>
+                {S.connected && r.error && <p className="sala-error"><time>{when(r.error.t)}</time> {r.error.text}</p>}
                 <p className="sala-say">
                   {!S.connected ? "Non connesso: nessun dato recente dal desk."
                     : e ? <><time>{when(e.t)}</time> {e.text}</>
-                    : "Nessuna voce in questo turno."}
+                    : r.error ? null
+                    : r.last ? <>Nessuna voce in questo turno. Ultima: <time>{when(r.last.t)}</time> {r.last.text}</>
+                    : "Nessuna voce registrata."}
                 </p>
+                {id === "TRADER" && S.pendingProposals > 0 && <p className="sala-wait">{S.pendingProposals} proposta in attesa della tua conferma</p>}
                 {S.connected && r.turnEntries.length > 1 && <p className="sala-more">+{r.turnEntries.length - 1} altre voci nel turno</p>}
               </li>
             )
           })}
         </ul>
-        <p className="note">Ogni movimento, schermo e fumetto viene dal registro reale dell'ultimo turno: i bot si animano solo quando arriva un turno nuovo e fanno solo ciò che il registro dice. Senza dati recenti la sala resta ferma e segna «non connesso». La sala non può comprare, vendere o cambiare regole.</p>
+        <p className="note">Flusso: Scout (dati e conto) → Analista → Risk (può bloccare) → Trader (prepara) → la tua conferma → ordine. Ogni movimento, schermo e fumetto viene dal registro reale dell'ultimo turno; senza dati recenti la sala resta ferma e segna «non connesso». La sala non compra, non vende e non cambia regole.</p>
       </article>
       <article className="panel span2">
         <div className="ph"><h2>Cosa dicono i bot</h2><span className="eyebrow">registro reale</span></div>

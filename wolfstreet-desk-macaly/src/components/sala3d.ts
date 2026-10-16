@@ -11,10 +11,10 @@ import type { RoleId, SalaState } from "./sala-state"
 const HUMAN_URL = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/eyQqA07Y-IQBBs0mOVim5/trader-human-PbjW_jnI.glb"
 const GOLD = 0xe8be5c
 const ROLES: { id: RoleId; color: number; suit: number; angle: number }[] = [
-  { id: "ANALISTA", color: 0x6fa8ff, suit: 0x1b2638, angle: -2.35 },
-  { id: "RISK", color: 0xff8a5c, suit: 0x33221f, angle: -0.8 },
-  { id: "TRADER", color: 0x45c98a, suit: 0x18291f, angle: 0.8 },
-  { id: "SISTEMA", color: GOLD, suit: 0x2a261d, angle: 2.35 },
+  { id: "SCOUT", color: 0x5fd3d3, suit: 0x16272a, angle: -2.35 },
+  { id: "ANALISTA", color: 0x6fa8ff, suit: 0x1b2638, angle: -0.8 },
+  { id: "RISK", color: 0xff8a5c, suit: 0x33221f, angle: 0.8 },
+  { id: "TRADER", color: 0x45c98a, suit: 0x18291f, angle: 2.35 },
 ]
 const css = (c: number) => `#${c.toString(16).padStart(6, "0")}`
 const fmt = (n: unknown, d = 0) => {
@@ -148,14 +148,21 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
       g.fillStyle = "#45c98a"; const tl = `target ${fmt(p.tp)}`; g.fillText(tl, x1 - g.measureText(tl).width, y + 38)
       roleLine(g, S, "TRADER", H - 14)
     },
-    SISTEMA: (g, W, H, S, d) => {
-      frame(g, W, H, "SISTEMA · Revolut X", "#e8be5c"); if (!S.connected) return offline(g, W, H, S)
-      g.fillStyle = S.liveConfirmed ? "#e8be5c" : "#cfd6e6"; g.font = "700 30px IBM Plex Mono, monospace"; g.fillText(S.modeLabel, 18, 96)
-      g.fillStyle = "#ece6d6"; g.font = "500 21px IBM Plex Mono, monospace"; g.fillText(`prossimo turno ${fmtWait(S.nextInS)}`, 18, 136)
-      g.fillStyle = "#9aa3b5"; g.font = "400 18px IBM Plex Mono, monospace"
-      g.fillText(`patrimonio ${fmt(d?.kpi?.equity, 2)} €`, 18, 170)
-      g.fillText(`liquidità  ${fmt(d?.balances?.EUR?.available ?? d?.kpi?.cash, 2)} €`, 18, 196)
-      roleLine(g, S, "SISTEMA", H - 14)
+    SCOUT: (g, W, H, S, d) => {
+      frame(g, W, H, "SCOUT · dati e conto", "#5fd3d3"); if (!S.connected) return offline(g, W, H, S)
+      const sc = d?.scout ?? {}
+      const rows: [string, string, boolean | null][] = [
+        ["saldo broker", sc.checked_at ? `confermato ${new Date(sc.checked_at * 1000).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" })}` : "non richiesto", sc.checked_at ? true : null],
+        ["registro=conto", (sc.desync ?? []).length ? "NO" : sc.checked_at ? "sì" : "—", (sc.desync ?? []).length ? false : sc.checked_at ? true : null],
+        ["prezzi", sc.prices_n ? `${sc.prices_ok}/${sc.prices_n}` : "—", sc.prices_n ? sc.prices_ok === sc.prices_n : null],
+        ["candele 4h", sc.prices_n ? `${sc.candles_ok}/${sc.prices_n}` : "—", sc.prices_n ? sc.candles_ok === sc.prices_n : null],
+      ]
+      rows.forEach(([lab, v, ok], i) => {
+        const y = 78 + i * 34
+        g.fillStyle = "#9aa3b5"; g.font = "400 18px IBM Plex Mono, monospace"; g.fillText(lab, 18, y)
+        g.fillStyle = ok === null ? "#9aa3b5" : ok ? "#45c98a" : "#e46a6a"; g.font = "600 18px IBM Plex Mono, monospace"; g.fillText(v, 200, y)
+      })
+      roleLine(g, S, "SCOUT", H - 14)
     },
   }
 
@@ -292,7 +299,7 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   }
   /** Racconta il turno appena arrivato, nell'ordine reale del lavoro, solo con i ruoli che hanno scritto qualcosa. */
   function playTurn(S: SalaState) {
-    const order = (["ANALISTA", "RISK", "TRADER", "SISTEMA"] as RoleId[]).filter((id) => S.roles[id].turnEntries.length)
+    const order = (["SCOUT", "ANALISTA", "RISK", "TRADER"] as RoleId[]).filter((id) => S.roles[id].turnEntries.length)
     let prev: Person | null = null
     order.forEach((id, i) => {
       const p = byId[id]
@@ -306,7 +313,8 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
           p.target.set(Math.sin(p.st.angle) * 2.4, 0, -Math.cos(p.st.angle) * 2.4)
           later(4200, () => p.target.copy(p.st.seat))
         }
-        if (id === "SISTEMA") gesture(p, S.events.errors ? "shake" : "agree")
+        if (id === "SCOUT") gesture(p, S.events.scoutStop ? "shake" : "agree")
+        if (id === "TRADER" && S.events.proposal && !S.events.trade && !S.events.sold) gesture(p, "agree")
         prev = p
       })
       prev = p
