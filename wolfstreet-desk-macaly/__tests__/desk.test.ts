@@ -263,8 +263,12 @@ describe("Scout e conferma del titolare", () => {
     expect(state.books.live.cash).toBeCloseTo(0.2, 6)
     expect(r.budget).toBeCloseTo(state.books.live.start, 2)
     expect(r.notes.join()).toMatch(/prelievo/)
+    // il prelievo non deve sembrare un crollo: il calo dal massimo resta quello vero (sotto l'1% qui)
+    const L = state.books.live
+    expect((L.peak - L.cash) / L.peak).toBeLessThan(0.05)
     const s3: any = await new Office(fake as any, { ...CFG, budget_eur: r.budget }, { ...LIVE }, state, T + 3600, { uuid }).run()
     expect(s3.scout.stop).toBeNull()
+    expect(s3.paused).toBe(false) // nessuna falsa pausa di drawdown dopo l'allineamento
     expect(fake.orders).toHaveLength(0)
   })
   it("saldo non confermato: il turno si ferma, nessuna proposta e nessuna vendita", async () => {

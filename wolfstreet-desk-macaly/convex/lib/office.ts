@@ -692,9 +692,17 @@ export class Office {
     }
     const d = balTotal(bal, "EUR") - this.live.cash
     if (Math.abs(d) >= 0.005) {
+      const before = this.live.cash // dopo le chiusure qui sopra il registro è tutto in euro
       this.live.start += d; this.live.cash += d
-      this.live.equity = (this.live.equity ?? []).map(([t, v]) => [t, Math.round((v + d) * 1e4) / 1e4] as [number, number])
-      this.live.peak = (this.live.peak ?? this.live.start - d) + d
+      if (d < 0 && before > 0) {
+        // prelievo: la curva si riduce in proporzione, così il calo percentuale resta quello vero
+        const f = Math.max(0, before + d) / before
+        this.live.equity = (this.live.equity ?? []).map(([t, v]) => [t, Math.round(v * f * 1e6) / 1e6] as [number, number])
+        this.live.peak = (this.live.peak ?? before) * f
+      } else {
+        this.live.equity = (this.live.equity ?? []).map(([t, v]) => [t, Math.round((v + d) * 1e4) / 1e4] as [number, number])
+        this.live.peak = (this.live.peak ?? this.live.start - d) + d
+      }
       notes.push(`EUR: ${d > 0 ? "versamento" : "prelievo"} di ${eur(Math.abs(d))} registrato (non è un risultato di trading)`)
     }
     this.state.desync_seen = ""

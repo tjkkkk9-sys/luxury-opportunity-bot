@@ -110,6 +110,22 @@ export const setTracking = internalMutation({
     return next
   },
 })
+/** Riparazione una tantum (16/10/2026): l'allineamento aveva SPOSTATO la curva LIVE di d invece di ridurla in proporzione.
+ *  Riporta i punti fino a beforeT alla scala giusta e ricalcola il massimo. Non tocca cassa, posizioni né control. */
+export const repairWithdrawalScale = internalMutation({
+  args: { d: v.number(), beforeT: v.number() },
+  handler: async (ctx, { d, beforeT }) => {
+    const st = parse(await getKV(ctx, "state"), {})
+    const L = st?.books?.live
+    if (!L || d >= 0 || L.eq_scale_fix) return { ok: false, why: "niente da riparare" }
+    const f = L.cash / (L.cash - d)
+    L.equity = (L.equity ?? []).map(([t, val]: [number, number]) => (t <= beforeT ? [t, Math.round((val - d) * f * 1e6) / 1e6] : [t, val]))
+    L.peak = Math.max(...L.equity.map((e: [number, number]) => e[1]), L.cash)
+    L.eq_scale_fix = true
+    await putKV(ctx, "state", JSON.stringify(st))
+    return { ok: true, peak: L.peak, f }
+  },
+})
 export const readLab = internalQuery({ args: {}, handler: async (ctx) => parse(await getKV(ctx, "lab"), null) })
 export const saveLab = internalMutation({ args: { lab: v.string() }, handler: async (ctx, { lab }) => { await putKV(ctx, "lab", lab) } })
 
