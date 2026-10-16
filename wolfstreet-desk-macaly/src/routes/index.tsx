@@ -712,7 +712,14 @@ function Room({ D }: { D: any }) {
 function Lab({ D }: { D: any }) {
   const run = useAction(api.desk.labNow)
   const [msg, setMsg] = useState("")
+  const [wi, setWi] = useState("80")
+  const [what, setWhat] = useState<any>(null)
   const L = D.lab, F = D.forecasts
+  async function tryIf() {
+    setWhat(null); setMsg(`Provo la soglia ${wi} sullo stesso storico… (1–2 minuti, nessuna regola cambia)`)
+    try { const r: any = await run({ what_if_min_score: Number(wi) }); setWhat(r); setMsg("") }
+    catch (e: any) { setMsg(String(e?.data ?? e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) }
+  }
   const n = (v: any, d = 2) => (v === null || v === undefined ? "—" : Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "∞")
   async function go() {
     setMsg("Scarico lo storico da Revolut X e rifaccio le prove… (1–2 minuti)")
@@ -736,7 +743,12 @@ function Lab({ D }: { D: any }) {
           <p className="note">R = risultato in multipli del rischio iniziale (1 R = perdita allo stop). Le prove storiche non garantiscono i risultati futuri; con poche operazioni il verdetto è fragile.</p>
         </> : <p className="empty">Le prove non sono ancora state eseguite.</p>}
         <div className="row"><button className="solid" onClick={() => void go()}>Rifai le prove adesso</button></div>
+        <div className="row whatif"><label>Prova «e se» con soglia <input aria-label="Soglia da provare" inputMode="numeric" value={wi} onChange={(e) => setWi(e.target.value.replace(/\D/g, "").slice(0, 3))} /></label>
+          <button className="ghost" disabled={!(Number(wi) >= 50 && Number(wi) <= 100)} onClick={() => void tryIf()}>Prova</button></div>
         {msg && <p className="note" role="status">{msg}</p>}
+        {what && <div className="tw"><p className="note"><b>Solo prova, nessuna regola cambiata</b> · {what.strategy} → <b>{what.verdict}</b>{what.reasons?.length ? ` · ${what.reasons.join(" · ")}` : ""}</p><table>
+          <thead><tr><th>Strumento</th><th>Op.</th><th>Vinte</th><th>R medio</th><th>Profit f.</th><th>Calo R</th><th>Recente: op. · R</th></tr></thead>
+          <tbody>{what.symbols.map((x: any) => row(x.symbol, x.all, x.recent))}{row("Totale", what.total.all, what.total.out_of_sample)}</tbody></table></div>}
       </article>
       <article className="panel span2">
         <div className="ph"><h2>Previsione → esito</h2><span className="eyebrow">{F ? `${F.evaluated} valutate · ${F.open} aperte` : ""}</span></div>

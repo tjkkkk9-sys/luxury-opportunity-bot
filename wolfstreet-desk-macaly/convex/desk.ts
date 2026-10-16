@@ -187,16 +187,18 @@ export const runTurn = internalAction({
 // ------------------------------------------------------------- LABORATORIO: prove storiche ripetibili (sola lettura)
 /** Scarica lo storico 4h da Revolut X e rifà le prove con le regole attuali. Nessun ordine, nessuna modifica alle regole. */
 export const runLab = internalAction({
-  args: {},
-  handler: async (ctx) => {
+  args: { what_if_min_score: v.optional(v.number()) }, // prova "e se": non salva e non cambia nessuna regola
+  handler: async (ctx, { what_if_min_score }) => {
     const now = Math.floor(Date.now() / 1000)
     const { config } = await ctx.runQuery(internal.store.readAll, {})
-    const [cfg] = safety.clampConfig(config)
+    const [cfg] = safety.clampConfig(what_if_min_score === undefined ? config : { ...config, min_score: what_if_min_score })
     const client = await buildClient(ctx)
     const data: Record<string, st.Candle[]> = {}
     for (const sym of cfg.pairs.map(toDash)) data[sym] = st.closedOnly(st.normalize(await client.candles(sym, cfg.interval_min, 1500)), cfg.interval_min, now)
     const strat = `${STRATEGY_VERSION} · soglia ${cfg.min_score} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`
     const report = labReport(data, cfg, now, strat)
+    if (what_if_min_score !== undefined) return { what_if: true, strategy: strat, verdict: report.verdict, reasons: report.reasons, total: report.total,
+      symbols: report.symbols.map((x) => ({ symbol: x.symbol, all: x.all, recent: x.out_of_sample })) }
     const prev: any = await ctx.runQuery(internal.store.readLab, {})
     await ctx.runMutation(internal.store.saveLab, { lab: JSON.stringify(report) })
     if (!prev || prev.verdict !== report.verdict || prev.strategy !== report.strategy) {
@@ -208,8 +210,8 @@ export const runLab = internalAction({
   },
 })
 export const labNow = action({
-  args: {},
-  handler: async (ctx): Promise<any> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runLab, {}) },
+  args: { what_if_min_score: v.optional(v.number()) },
+  handler: async (ctx, a): Promise<any> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runLab, a) },
 })
 
 // ------------------------------------------------------------- conferma del titolare e allineamento
