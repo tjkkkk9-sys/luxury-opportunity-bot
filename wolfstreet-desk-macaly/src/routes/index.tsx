@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useAuthActions } from "@convex-dev/auth/react"
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { FormEvent, ReactNode } from "react"
 import { api } from "../../convex/_generated/api"
 import siteMetadata from "../metadata.json"
@@ -108,7 +108,7 @@ function NotOwner() {
 }
 
 // ------------------------------------------------------------------ desk
-const TABS = [["ufficio", "Revolut X"], ["plus500", "Plus500"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
+const TABS = [["ufficio", "Revolut X"], ["sala", "Sala 3D"], ["plus500", "Plus500"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
 type Tab = (typeof TABS)[number][0]
 
 function Desk() {
@@ -135,6 +135,7 @@ function Desk() {
       {tab === "mercato" && <Mercato D={D} />}
       {tab === "posizioni" && <Posizioni D={D} />}
       {tab === "registro" && <Registro D={D} />}
+      {tab === "sala" && <Sala D={D} />}
       {tab === "comandi" && <Comandi data={data} D={D} />}
     </div>
   )
@@ -699,5 +700,44 @@ function Room({ D }: { D: any }) {
       <div className="rsign"><span>WOLF STREET</span><span>CAPITAL</span></div>
       <figcaption className={`rbubble ${stopped ? "off" : ""}`}><span className="typing" aria-hidden="true"><i /><i /><i /></span>{say}</figcaption>
     </figure>
+  )
+}
+
+// ------------------------------------------------------------------ sala operativa 3D (dati veri dell'ultimo turno)
+function Sala({ D }: { D: any }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const tagsRef = useRef<HTMLDivElement>(null)
+  const dataRef = useRef<any>(D)
+  dataRef.current = D
+  const [err, setErr] = useState("")
+  useEffect(() => {
+    let stop: (() => void) | undefined, alive = true
+    import("../components/sala3d")
+      .then((m) => { if (alive && canvasRef.current && tagsRef.current) stop = m.mountSala(canvasRef.current, tagsRef.current, () => dataRef.current) })
+      .catch(() => setErr("La grafica 3D non si è caricata su questo dispositivo."))
+    return () => { alive = false; stop?.() }
+  }, [])
+  const nextView = () => { if (canvasRef.current) canvasRef.current.dispatchEvent(new MouseEvent("dblclick")) }
+  const log = (D.log ?? []).filter((l: any) => ["ANALISTA", "RISK", "TRADER", "SISTEMA"].includes(l.bot)).slice(0, 10)
+  return (
+    <section className="view split">
+      <article className="panel span2 sala-wrap">
+        <div className="ph"><h2>Sala operativa</h2><button className="ghost" onClick={nextView}>Cambia vista</button></div>
+        <div className="sala-stage">
+          <canvas ref={canvasRef} className="sala-canvas" aria-label="Sala operativa 3D: i quattro bot del desk lavorano alle loro postazioni e si passano i dati" />
+          <div ref={tagsRef} className="sala-tags" />
+          <span className="sala-hint">Trascina per girare · rotella o pizzica per avvicinarti · doppio tocco cambia vista</span>
+          {err && <p className="banner err sala-err">{err}</p>}
+        </div>
+        <p className="note">Schermi e fumetti mostrano i dati veri dell'ultimo turno ({D.generated_at ? when(D.generated_at) : "—"}) e si aggiornano da soli a ogni turno. I movimenti dei bot rappresentano il lavoro del turno: analisi, rischio, ordine, registrazione.</p>
+      </article>
+      <article className="panel span2">
+        <div className="ph"><h2>Cosa dicono i bot</h2><span className="eyebrow">registro reale</span></div>
+        <ol className="log">
+          {log.length ? log.map((l: any, i: number) => <li key={i} className={l.level}><time>{when(l.t)}</time><div><span className={`who ${l.bot}`}>{l.bot}</span> <span className="txt">{l.text}</span></div></li>)
+            : <li><span /><span className="empty">Nessuna voce ancora.</span></li>}
+        </ol>
+      </article>
+    </section>
   )
 }
