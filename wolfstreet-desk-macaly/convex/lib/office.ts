@@ -35,7 +35,7 @@ export class OrderUncertain extends Error {}
 export type Book = {
   cash: number; start: number; positions: Record<string, Position>; closed: any[]; equity: [number, number][]
   daily: { date: string; realized: number }; weekly: { week: string; realized: number }
-  peak: number; cooldown: Record<string, number>; fees: number
+  peak: number; cooldown: Record<string, number>; fees: number; eq_v2?: boolean
 }
 export type State = { books?: { paper?: Book; live?: Book }; log?: any[]; runs?: number; last_run?: number; pending_orders?: any[]; shadow?: any[] }
 export type AiReview = (sig: Signal, cfg: Cfg) => Promise<{ verdict: string; reason: string } | null>
@@ -194,7 +194,23 @@ export class Office {
     if (delta !== 0) {
       const d = Math.max(delta, -this.live.cash)
       this.live.start += d; this.live.cash += d
+      // Il versamento non è un guadagno né una perdita: sposta anche la curva e il massimo, così il calo resta vero.
+      this.live.equity = (this.live.equity ?? []).map(([t, v]) => [t, Math.round((v + d) * 1e4) / 1e4] as [number, number])
+      this.live.peak = (this.live.peak ?? this.live.start - d) + d
       if (d) this.log("SISTEMA", `Budget LIVE aggiornato a ${this.live.start.toFixed(2)} € (${d > 0 ? "+" : ""}${d.toFixed(2)} € di liquidità)`)
+    }
+    // Riparazione una tantum: curve registrate prima che il budget spostasse anche la curva (salto > 25% in un turno).
+    if (!this.live.eq_v2) {
+      const e = this.live.equity ?? []
+      for (let j = e.length - 2; j >= 0; j--) {
+        const jump = e[j + 1][1] - e[j][1]
+        if (e[j][1] > 0 && jump > e[j][1] * 0.25) {
+          const d = Math.round(jump * 100) / 100
+          for (let i = 0; i <= j; i++) e[i] = [e[i][0], Math.round((e[i][1] + d) * 1e4) / 1e4]
+          break
+        }
+      }
+      this.live.eq_v2 = true
     }
     this.book = this.mode === "live" ? this.live : this.mode === "paper" ? this.paper : null
     this.journal = new Journal(state, this.persist)

@@ -199,3 +199,19 @@ describe("budget LIVE", () => {
     expect([o2.live.start, o2.live.cash]).toEqual([12, 0]) // non scende mai sotto zero di liquidità
   })
 })
+
+describe("calo massimo e versamenti", () => {
+  it("aumentare il budget non conta come calo", () => {
+    const live = { ...emptyBook(40), cash: 28, equity: [[1, 40], [2, 39.99]] as [number, number][], eq_v2: true }
+    const state: any = { books: { live } }
+    const o = new Office(new Fake() as any, { ...CFG, budget_eur: 60 }, { mode: "shadow" } as any, state, 1_800_000_000)
+    expect(o.live.equity.map((x) => x[1])).toEqual([60, 59.99])
+  })
+  it("ripara una curva vecchia con il salto del versamento", () => {
+    const live = { ...emptyBook(60), cash: 48, equity: [[1, 40], [2, 39.988], [3, 59.9881], [4, 59.94]] as [number, number][] }
+    const state: any = { books: { live } }
+    const o = new Office(new Fake() as any, { ...CFG, budget_eur: 60 }, { mode: "shadow" } as any, state, 1_800_000_000)
+    expect(o.live.equity.map((x) => x[1])).toEqual([60, 59.988, 59.9881, 59.94])
+    expect(o.live.eq_v2).toBe(true)
+  })
+})
