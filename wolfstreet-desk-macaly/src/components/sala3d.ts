@@ -1,6 +1,12 @@
 // Sala operativa 3D: quattro bot (Analista, Risk, Trader, Sistema) alle loro scrivanie.
 // Gli schermi e i fumetti usano i dati veri dell'ultimo turno del desk; i movimenti sono animazione.
 import * as THREE from "three"
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js"
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js"
+
+// Figura umana con animazioni da motion capture (idle, camminata, annuire, scuotere la testa).
+const HUMAN_URL = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/eyQqA07Y-IQBBs0mOVim5/trader-human-PbjW_jnI.glb"
 
 type D = any
 const GOLD = 0xe8be5c
@@ -40,8 +46,13 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.outputEncoding = THREE.sRGBEncoding
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.15
   const scene = new THREE.Scene()
   scene.fog = new THREE.Fog(0x07080b, 22, 60)
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+  // riflessi solo sulle persone: la sala resta scura e calda
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
 
   scene.add(new THREE.HemisphereLight(0x8a90a8, 0x0a0a0c, 0.55))
@@ -195,6 +206,47 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   })
   const B = Object.fromEntries(bots.map((b) => [b.st.id, b]))
 
+  // persone: stesso modello per tutti, abito scuro e dettagli nel colore del ruolo
+  type Human = { model: THREE.Object3D; mixer: THREE.AnimationMixer; idle: THREE.AnimationAction; walk: THREE.AnimationAction; agree?: THREE.AnimationAction; shake?: THREE.AnimationAction; walking: boolean }
+  const humans = new Map<string, Human>()
+  let disposed = false
+  new GLTFLoader().load(HUMAN_URL, (gltf) => {
+    if (disposed) return
+    const clips = gltf.animations
+    const clip = (n: string) => clips.find((c) => c.name === n)
+    const additive = (n: string) => {
+      const c = clip(n); if (!c) return undefined
+      const cc = c.clone(); THREE.AnimationUtils.makeClipAdditive(cc); return THREE.AnimationUtils.subclip(cc, n, 2, Math.max(3, Math.round(cc.duration * 30)), 30)
+    }
+    const agreeClip = additive("agree"), shakeClip = additive("headShake")
+    bots.forEach((b) => {
+      const model = SkeletonUtils.clone(gltf.scene)
+      model.traverse((o: any) => {
+        if (!o.isMesh) return
+        o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false
+        const joints = /joint/i.test(o.material?.name ?? "")
+        o.material = new THREE.MeshStandardMaterial(joints
+          ? { color: b.st.color, emissive: b.st.color, emissiveIntensity: 0.45, metalness: 0.9, roughness: 0.22, envMap: envTex, envMapIntensity: 0.9 }
+          : { color: 0x16181e, metalness: 0.1, roughness: 0.6 })
+      })
+      model.position.copy(b.pos); model.scale.setScalar(1.06); scene.add(model)
+      const mixer = new THREE.AnimationMixer(model)
+      const idle = mixer.clipAction(clip("idle")!), walk = mixer.clipAction(clip("walk")!)
+      idle.play(); walk.play(); walk.setEffectiveWeight(0)
+      idle.time = Math.random() * idle.getClip().duration // respiro sfalsato, non tutti uguali
+      const mk = (c?: THREE.AnimationClip) => {
+        if (!c) return undefined
+        const a = mixer.clipAction(c); a.blendMode = THREE.AdditiveAnimationBlendMode; a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = false; return a
+      }
+      humans.set(b.st.id, { model, mixer, idle, walk, agree: mk(agreeClip), shake: mk(shakeClip), walking: false })
+      b.m.root.visible = false
+    })
+  }, undefined, () => { /* se il modello non arriva restano i robot */ })
+  const gesture = (id: string, kind: "agree" | "shake") => {
+    const h = humans.get(id); const a = kind === "agree" ? h?.agree : h?.shake
+    if (a && !reduce) { a.reset(); a.setEffectiveWeight(1); a.play() }
+  }
+
   // ologramma centrale
   const holo = new THREE.Group(); holo.position.y = 2.2; scene.add(holo)
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 0.25, 48), metal); base.position.y = -2.08; holo.add(base)
@@ -229,16 +281,16 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   function nextPhase() {
     phase = (phase + 1) % 6; phaseT = 0
     const A = B.ANALISTA, K = B.RISK, T = B.TRADER, S = B.SISTEMA
-    if (phase === 0) { speak(A); A.typing = 2.5 }
+    if (phase === 0) { speak(A); A.typing = 2.5; if ((getData()?.signals ?? []).some((x: any) => x.action === "EVITA")) setTimeout(() => gesture("ANALISTA", "shake"), 900) }
     if (phase === 1) { sendPacket(A, K, 0x7fb8ff) }
-    if (phase === 2) { speak(K); K.typing = 1.5; sendPacket(K, T, 0xff9b6a) }
+    if (phase === 2) { speak(K); K.typing = 1.5; gesture("RISK", "agree"); sendPacket(K, T, 0xff9b6a) }
     if (phase === 3) { speak(T); T.target.set(Math.sin(0.8) * 2.3, 0, -Math.cos(0.8) * 2.3) }
     if (phase === 4) { T.target.copy(T.st.seat); sendPacket(T, S, 0x4fd394) }
-    if (phase === 5) { speak(S); S.typing = 2 }
+    if (phase === 5) { speak(S); S.typing = 2; gesture("SISTEMA", "agree") }
   }
 
   // camera e controlli
-  const views = [{ yaw: 0, pitch: 0.58, dist: 15 }, { yaw: 0.9, pitch: 0.25, dist: 11 }, { yaw: -1.2, pitch: 0.6, dist: 13 }, { yaw: Math.PI, pitch: 0.35, dist: 14 }]
+  const views = [{ yaw: 0, pitch: 0.5, dist: 13 }, { yaw: 0.9, pitch: 0.25, dist: 11 }, { yaw: -1.2, pitch: 0.6, dist: 13 }, { yaw: Math.PI, pitch: 0.35, dist: 14 }]
   let vi = 0, fit = 1, idle = 0, dragging = false, last: [number, number] = [0, 0], pinch: number | null = null
   const cam = { ...views[0] }, goal = { ...views[0] }
   const onDown = (e: PointerEvent) => { dragging = true; last = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); idle = 0 }
@@ -283,7 +335,7 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
     bots.forEach((b) => {
       const m = b.m, to = b.target.clone().sub(b.pos); to.y = 0
       const moving = to.length() > 0.05
-      if (moving) { b.pos.add(to.clampLength(0, dt * 2.2)); b.walk += dt * 9; m.root.rotation.y = Math.atan2(to.x, to.z) }
+      if (moving) { b.pos.add(to.clampLength(0, dt * 1.45)); b.walk += dt * 9; m.root.rotation.y = Math.atan2(to.x, to.z) }
       else { const look = new THREE.Vector3().subVectors(b.st.group.position, b.pos); m.root.rotation.y += (Math.atan2(look.x, look.z) - m.root.rotation.y) * 0.1 }
       m.root.position.set(b.pos.x, reduce ? 0 : Math.abs(Math.sin(b.walk)) * (moving ? 0.08 : 0) + Math.sin(t * 2 + b.st.angle) * 0.02, b.pos.z)
       m.legs[0].position.z = moving ? Math.sin(b.walk) * 0.12 : 0; m.legs[1].position.z = moving ? -Math.sin(b.walk) * 0.12 : 0
@@ -294,6 +346,14 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
       m.head.rotation.y = typ ? Math.sin(t * 3) * 0.15 : Math.sin(t * 0.7 + b.st.angle) * 0.3
       const blink = Math.sin(t * 1.3 + b.st.angle * 3) > 0.985 ? 0.1 : 1; m.eyes.forEach((e) => (e.scale.y = blink))
       ;(m.halo.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.25 * Math.sin(t * 3 + b.st.angle)
+      const h = humans.get(b.st.id)
+      if (h) {
+        h.model.position.set(b.pos.x, 0, b.pos.z)
+        let dy = m.root.rotation.y - h.model.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy))
+        h.model.rotation.y += dy * Math.min(1, dt * 8)
+        if (moving !== h.walking) { h.walking = moving; (moving ? h.walk : h.idle).setEffectiveWeight(1); (moving ? h.idle : h.walk).setEffectiveWeight(1); (moving ? h.idle : h.walk).crossFadeTo(moving ? h.walk : h.idle, 0.35, false) }
+        h.mixer.update(reduce ? 0 : dt)
+      }
       b.sayT = Math.max(0, b.sayT - dt)
       const p = headPos(b).project(camera)
       b.tag.style.display = p.z < 1 ? "" : "none"
@@ -320,7 +380,7 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   raf = requestAnimationFrame(tick)
 
   return () => {
-    cancelAnimationFrame(raf); ro.disconnect()
+    disposed = true; cancelAnimationFrame(raf); ro.disconnect(); envTex.dispose(); pmrem.dispose()
     canvas.removeEventListener("pointerdown", onDown); canvas.removeEventListener("pointermove", onMove); canvas.removeEventListener("pointerup", onUp)
     canvas.removeEventListener("wheel", onWheel); canvas.removeEventListener("touchmove", onTouch); canvas.removeEventListener("touchend", onTouchEnd)
     canvas.removeEventListener("dblclick", nextView)
