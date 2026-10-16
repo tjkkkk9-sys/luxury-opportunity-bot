@@ -109,7 +109,7 @@ function NotOwner() {
 }
 
 // ------------------------------------------------------------------ desk
-const TABS = [["ufficio", "Revolut X"], ["sala", "Sala 3D"], ["plus500", "Plus500"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
+const TABS = [["ufficio", "Revolut X"], ["sala", "Sala 3D"], ["lab", "Laboratorio"], ["plus500", "Plus500"], ["mercato", "Mercato"], ["posizioni", "Posizioni"], ["registro", "Registro"], ["comandi", "Comandi"]] as const
 type Tab = (typeof TABS)[number][0]
 
 function Desk() {
@@ -137,6 +137,7 @@ function Desk() {
       {tab === "posizioni" && <Posizioni D={D} />}
       {tab === "registro" && <Registro D={D} />}
       {tab === "sala" && <Sala D={D} />}
+      {tab === "lab" && <Lab D={D} />}
       {tab === "comandi" && <Comandi data={data} D={D} />}
     </div>
   )
@@ -707,6 +708,50 @@ function Room({ D }: { D: any }) {
   )
 }
 
+// ------------------------------------------------------------------ laboratorio: prove storiche e previsione → esito
+function Lab({ D }: { D: any }) {
+  const run = useAction(api.desk.labNow)
+  const [msg, setMsg] = useState("")
+  const L = D.lab, F = D.forecasts
+  const n = (v: any, d = 2) => (v === null || v === undefined ? "—" : Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "∞")
+  async function go() {
+    setMsg("Scarico lo storico da Revolut X e rifaccio le prove… (1–2 minuti)")
+    try { const r: any = await run({}); setMsg(`Fatto: ${r.verdict}, ${r.trades} operazioni simulate. Il prossimo turno usa i nuovi risultati.`) }
+    catch (e: any) { setMsg(String(e?.data ?? e?.message ?? e).replace(/^.*Uncaught Error: /, "").split("\n")[0]) }
+  }
+  const row = (lab: string, a: any, o: any, c?: number) => (
+    <tr key={lab}><th>{lab}</th><td className="num">{a.trades}</td><td className="num">{n(a.win_rate, 0)}%</td><td className="num">{n(a.expectancy_r)}</td><td className="num">{n(a.profit_factor)}</td><td className="num">{n(a.max_drawdown_r, 1)}</td><td className="num">{o.trades} · {n(o.expectancy_r)}</td>{c !== undefined && <td className="num">{c}</td>}</tr>)
+  return (
+    <section className="view split">
+      <article className="panel span2">
+        <div className="ph"><h2>Prove storiche</h2><span className={`chip ${L?.verdict === "SUPERATO" ? "c-buy" : L?.verdict === "NON SUPERATO" ? "c-avoid" : "c-wait"}`}>{L?.verdict ?? "non ancora eseguite"}</span></div>
+        <p className="note">Stesse regole del desk, sulle candele 4h vere di Revolut X: si decide sulla candela chiusa e si entra all'apertura della successiva (nessun dato dal futuro), con commissioni ({n(L?.fee_pct, 2)}%) e slippage ({n(L?.slip_pct, 2)}%) su entrata e uscita. Il «periodo recente» è l'ultimo 40% dello storico, giudicato a parte. Soglie fissate prima del test: almeno {L?.promotion?.min_trades ?? 30} operazioni, profit factor ≥ {L?.promotion?.min_profit_factor ?? 1.2}, periodo recente positivo, calo massimo ≤ {L?.promotion?.max_drawdown_r ?? 8} R. Si ripete ogni notte; nessun ordine e nessuna regola cambiata.</p>
+        {L ? <>
+          <p className="stamp">{L.version} · {when(L.t)}</p>
+          <div className="tw"><table>
+            <thead><tr><th>Strumento</th><th>Op.</th><th>Vinte</th><th>R medio</th><th>Profit f.</th><th>Calo R</th><th>Recente: op. · R</th><th>Candele</th></tr></thead>
+            <tbody>{L.symbols.map((x: any) => row(x.symbol, x.all, x.out_of_sample, x.candles))}{row("Totale", L.total.all, L.total.out_of_sample)}</tbody>
+          </table></div>
+          {L.reasons?.length > 0 && <ul className="lab-why">{L.reasons.map((r: string) => <li key={r}>{r}</li>)}</ul>}
+          <p className="note">R = risultato in multipli del rischio iniziale (1 R = perdita allo stop). Le prove storiche non garantiscono i risultati futuri; con poche operazioni il verdetto è fragile.</p>
+        </> : <p className="empty">Le prove non sono ancora state eseguite.</p>}
+        <div className="row"><button className="solid" onClick={() => void go()}>Rifai le prove adesso</button></div>
+        {msg && <p className="note" role="status">{msg}</p>}
+      </article>
+      <article className="panel span2">
+        <div className="ph"><h2>Previsione → esito</h2><span className="eyebrow">{F ? `${F.evaluated} valutate · ${F.open} aperte` : ""}</span></div>
+        <p className="note">Ogni segnale che arriva al Risk (e ogni segnale bloccato dal Verificatore) diventa una previsione verificabile: entrata, stop e target. Sulle candele successive il desk registra se è arrivato prima il target o lo stop, senza ritoccare nulla. Così si misura se i blocchi e le proposte erano giusti.</p>
+        {F && F.evaluated > 0 ? <div className="kpis">
+          <div className="kpi"><span className="label">Target prima dello stop</span><b>{n(F.target_first_pct, 0)}%</b><i>previsto dal laboratorio {F.expected_win_pct === null ? "—" : n(F.expected_win_pct, 0) + "%"}</i></div>
+          <div className="kpi"><span className="label">Esito medio</span><b className={Number(F.avg_r) >= 0 ? "up" : "down"}>{n(F.avg_r)} R</b><i>su {F.evaluated} previsioni</i></div>
+          {Object.entries(F.by_tag ?? {}).map(([k, b]: any) => <div className="kpi" key={k}><span className="label">{k}</span><b>{b.n ? n((b.target / b.n) * 100, 0) : "—"}%</b><i>{b.n} valutate · {n(b.avg_r)} R</i></div>)}
+        </div> : <p className="empty">Nessuna previsione ancora valutata: servono alcune candele dopo i primi segnali.</p>}
+        {(F?.last ?? []).length > 0 && <ol className="log">{F.last.map((p: any) => <li key={p.id}><time>{when(p.created)}</time><div><span className="who">{p.symbol}</span> <span className="txt">{p.tag} · entrata {n(p.entry, 2)} · stop {n(p.stop, 2)} · target {n(p.tp, 2)} → <b>{p.outcome ?? "in corso"}</b>{p.outcome ? ` (${n(p.r)} R)` : ""}</span></div></li>)}</ol>}
+      </article>
+    </section>
+  )
+}
+
 // ------------------------------------------------------------------ proposte LIVE: nessun ordine senza la tua conferma
 function Proposte({ D }: { D: any }) {
   const decide = useAction(api.desk.decideProposal)
@@ -736,6 +781,7 @@ function Proposte({ D }: { D: any }) {
             <dt>Strategia</dt><dd>{p.contract?.strategia}</dd>
             <L t="Fatti" xs={p.contract?.fatti} /><L t="Ipotesi" xs={p.contract?.ipotesi} />
             <L t="Cosa annulla il segnale" xs={p.contract?.controtesi} /><L t="Cosa non so" xs={p.contract?.mancano} />
+            <L t="Verificatore" xs={p.contract?.verifica} />{p.contract?.prove_storiche && <><dt>Prove storiche</dt><dd>{p.contract.prove_storiche}</dd></>}
           </dl>
           <p className="note">Scade alle {when(p.expires)}. Alla conferma ricontrollo saldo, prezzo (max +0,5%) e limiti; se qualcosa non torna annullo senza inviare.</p>
           <div className="row"><button className="solid" disabled={!!busy} onClick={() => void go(p.id, true)}>Approva e invia</button><button className="ghost" disabled={!!busy} onClick={() => void go(p.id, false)}>Rifiuta</button></div>
@@ -830,7 +876,7 @@ function Sala({ D }: { D: any }) {
             )
           })}
         </ul>
-        <p className="note">Flusso: Scout (dati e conto) → Analista → Risk (può bloccare) → Trader (prepara) → la tua conferma → ordine. Ogni movimento, schermo e fumetto viene dal registro reale dell'ultimo turno; senza dati recenti la sala resta ferma e segna «non connesso». La sala non compra, non vende e non cambia regole.</p>
+        <p className="note">Flusso: Scout (dati e conto) → Analista → Verificatore e red team (possono bloccare) → Risk (può bloccare) → Trader (prepara) → la tua conferma → ordine. Ogni movimento, schermo e fumetto viene dal registro reale dell'ultimo turno; senza dati recenti la sala resta ferma e segna «non connesso». La sala non compra, non vende e non cambia regole.</p>
       </article>
       <article className="panel span2">
         <div className="ph"><h2>Cosa dicono i bot</h2><span className="eyebrow">registro reale</span></div>

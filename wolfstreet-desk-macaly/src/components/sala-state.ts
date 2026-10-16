@@ -1,8 +1,8 @@
 // Stato della Sala 3D ricavato SOLO dai dati del backend (istantanea "office" dell'ultimo turno).
 // Niente attività inventata: se un dato manca o è vecchio, il ruolo risulta inattivo o non connesso.
 
-// Quattro robot con un compito preciso, nell'ordine reale del flusso. SISTEMA è infrastruttura, non un robot.
-export const ROLE_IDS = ["SCOUT", "ANALISTA", "RISK", "TRADER"] as const
+// Cinque robot con un compito preciso, nell'ordine reale del flusso. SISTEMA è infrastruttura, non un robot.
+export const ROLE_IDS = ["SCOUT", "ANALISTA", "VERIFICATORE", "RISK", "TRADER"] as const
 export type RoleId = (typeof ROLE_IDS)[number]
 export type RoleStatus = "attivo" | "in attesa" | "errore" | "non connesso"
 export type LogEntry = { t: number; bot: string; text: string; level?: string }
@@ -10,6 +10,7 @@ export type LogEntry = { t: number; bot: string; text: string; level?: string }
 export const ROLE_INFO: Record<RoleId, { title: string; job: string }> = {
   SCOUT: { title: "Scout", job: "Controlla che saldo e posizioni siano confermati da Revolut X e che prezzi e candele siano freschi" },
   ANALISTA: { title: "Analista", job: "Applica la strategia documentata alle candele 4h e spiega perché entrare o no" },
+  VERIFICATORE: { title: "Verificatore", job: "Ricalcola indicatori e rischio con codice proprio; il red team cerca motivi di fallimento. Può bloccare" },
   RISK: { title: "Risk", job: "Controlla saldo libero, esposizione e limiti di perdita; può solo ridurre o bloccare" },
   TRADER: { title: "Trader", job: "Prepara l'ordine e lo invia solo dopo la tua conferma, poi verifica l'esito" },
 }
@@ -39,7 +40,7 @@ export type SalaState = {
   roles: Record<RoleId, RoleState>
   system: { entries: LogEntry[]; error: LogEntry | null } // infrastruttura: registro, modalità, ordini incerti
   pendingProposals: number // proposte LIVE in attesa della tua conferma (dal backend)
-  events: { trade: boolean; sold: boolean; riskBlock: boolean; buySignal: boolean; avoidOnly: boolean; proposal: boolean; scoutStop: boolean; errors: boolean }
+  events: { trade: boolean; sold: boolean; riskBlock: boolean; buySignal: boolean; avoidOnly: boolean; proposal: boolean; scoutStop: boolean; verifierBlock: boolean; verifierOk: boolean; errors: boolean }
 }
 
 const isRole = (b: unknown): b is RoleId => (ROLE_IDS as readonly string[]).includes(String(b))
@@ -88,6 +89,8 @@ export function salaState(D: any, nowS: number): SalaState {
     avoidOnly: an.some((l) => /nessun ingresso/.test(l.text)),
     proposal: tr.some((l) => /^PROPOSTA/.test(l.text)),
     scoutStop: roles.SCOUT.turnEntries.some((l) => l.level === "error"),
+    verifierBlock: roles.VERIFICATORE.turnEntries.some((l) => /BLOCCATO/.test(l.text)),
+    verifierOk: roles.VERIFICATORE.turnEntries.some((l) => /CONFERMATO/.test(l.text)),
     errors: turnLog.some((l) => l.level === "error") || (Array.isArray(D?.errors) && D.errors.length > 0),
   }
   return {

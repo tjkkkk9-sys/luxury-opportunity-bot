@@ -63,6 +63,9 @@ export const saveTurn = internalMutation({
   },
 })
 
+export const readLab = internalQuery({ args: {}, handler: async (ctx) => parse(await getKV(ctx, "lab"), null) })
+export const saveLab = internalMutation({ args: { lab: v.string() }, handler: async (ctx, { lab }) => { await putKV(ctx, "lab", lab) } })
+
 export const lock = internalMutation({
   args: { now: v.number(), release: v.optional(v.boolean()) },
   handler: async (ctx, { now, release }) => {

@@ -103,3 +103,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 .align-box { border-color: hsl(var(--down) / .6) !important; }
 .align-box ul { margin: 0 0 8px; padding-left: 18px; font-family: var(--mono); font-size: 13px; }
 @media (max-width: 520px) { .props dl { grid-template-columns: 1fr; } .props dt { margin-top: 4px; } }
+/* ---------- verificatore e laboratorio ---------- */
+.sala-role.VERIFICATORE { --rc: #b48cff; }
+@media (min-width: 901px) { .sala-roles { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.lab-why { margin: 8px 0; padding-left: 18px; font-size: 13px; color: hsl(var(--down)); }

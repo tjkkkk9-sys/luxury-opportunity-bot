@@ -3,6 +3,7 @@
 //   SCOUT    controllore dati: saldo confermato dal broker, registro = conto, prezzi e candele freschi
 //   TRADER   posizioni aperte: stop, target, trailing, trend, chiusura manuale
 //   ANALISTA scansione su candele chiuse e fresche
+//   VERIFICATORE ricalcola tutto con codice proprio + RED TEAM che cerca motivi di fallimento: può bloccare
 //   RISK     limiti giornalieri/settimanali, drawdown, esposizione, dati mancanti, veto IA (solo riduce o blocca)
 //   TRADER   esecuzione: SHADOW registra, PAPER simula, LIVE prepara una PROPOSTA che parte solo
 //            dopo la conferma del titolare (sito o Telegram), ricontrollando saldo, prezzo e limiti.
@@ -11,6 +12,9 @@
 import * as safety from "./safety"
 import * as st from "./strategy"
 import type { Cfg, Position, Signal } from "./strategy"
+import { verify } from "./verifier"
+import { evaluateForecasts, forecastSummary } from "./backtest"
+import type { Forecast, LabReport } from "./backtest"
 
 const MAX_LOG = 200, MAX_CLOSED = 300, MAX_EQUITY = 1500, MAX_SHADOW = 200
 export const MIN_CANDLES = 220
@@ -50,7 +54,7 @@ export type Proposal = {
   created: number; expires: number; decided?: number; ref_price: number; amount_eur?: number; qty?: number
   reason: string; score?: number; atr?: number; why?: string; result?: string; contract: Record<string, any>
 }
-export type State = { books?: { paper?: Book; live?: Book }; log?: any[]; runs?: number; last_run?: number; pending_orders?: any[]; shadow?: any[]; proposals?: Proposal[]; desync_seen?: string }
+export type State = { books?: { paper?: Book; live?: Book }; log?: any[]; runs?: number; last_run?: number; pending_orders?: any[]; shadow?: any[]; proposals?: Proposal[]; desync_seen?: string; forecasts?: Forecast[] }
 export type AiReview = (sig: Signal, cfg: Cfg) => Promise<{ verdict: string; reason: string } | null>
 
 export const emptyBook = (start: number): Book => ({
@@ -199,7 +203,8 @@ class LiveBroker implements Broker {
   }
 }
 
-export type OfficeOpts = { persist?: () => Promise<void>; ai?: AiReview; uuid?: () => string; aiEnabled?: boolean; telegram?: boolean }
+export type OfficeOpts = { persist?: () => Promise<void>; ai?: AiReview; uuid?: () => string; aiEnabled?: boolean; telegram?: boolean; lab?: LabReport | null }
+const MAX_FORECASTS = 300
 
 export class Office {
   c: MarketClient; ctl: safety.Control; state: State; cfg: Cfg; cfgNotes: string[]; now: number
@@ -207,7 +212,7 @@ export class Office {
   persist: () => Promise<void>; ai: AiReview; uuid: () => string; opts: OfficeOpts
   mode: string; liveBlocks: string[]; exitsLive: boolean
   paper: Book; live: Book; book: Book | null; journal: Journal
-  stats = { analyst: { scanned: 0, candidates: 0, ai: 0 }, risk: { checked: 0, blocked: 0, last: "" }, trader: { buys: 0, sells: 0, blocked: 0, shadow: 0, proposed: 0 } }
+  stats = { analyst: { scanned: 0, candidates: 0, ai: 0 }, risk: { checked: 0, blocked: 0, last: "" }, trader: { buys: 0, sells: 0, blocked: 0, shadow: 0, proposed: 0 }, verifier: { checked: 0, blocked: 0, last: "" } }
   bal: Record<string, any> | null = null // saldo confermato da Revolut X in questo turno
   scoutStop: string | null = null // motivo per cui niente ordini LIVE in questo turno
   scoutInfo: { checked_at: number | null; desync: string[]; prices_ok: number; prices_n: number; candles_ok: number; stale: string[] } =
@@ -310,6 +315,12 @@ export class Office {
       if (!cs || cs.length < MIN_CANDLES || age > cfg.interval_min * 1.5) stale.push(sym)
     }
     Object.assign(this.scoutInfo, { candles_ok: pairs.length - stale.length, stale })
+    const fc = (this.state.forecasts = this.state.forecasts ?? [])
+    const judged = evaluateForecasts(fc, Object.fromEntries(Object.entries(market).map(([k, v]) => [k, v[0]])), cfg.interval_min, this.now)
+    if (judged) {
+      const sm = forecastSummary(fc)
+      this.log("VERIFICATORE", `Previsione → esito: ${judged} nuove valutate · finora ${sm.evaluated}, target prima dello stop ${sm.target_first_pct?.toFixed(0) ?? "—"}% · media ${sm.avg_r?.toFixed(2) ?? "—"} R`)
+    }
     this.log("SCOUT", `Prezzi bid/ask ${prOk.length}/${pairs.length} · candele 4h aggiornate ${pairs.length - stale.length}/${pairs.length}` +
       (stale.length ? ` · vecchie o incomplete: ${stale.join(", ")} (niente ingressi lì)` : ""), stale.length || prOk.length < pairs.length ? "warn" : "info")
 
@@ -395,6 +406,21 @@ export class Office {
         if (amount < (cfg.min_trade_eur ?? 5)) amount = 0
       }
       if (amount <= 0) { this.blocked(sym, why); continue }
+      // VERIFICATORE + RED TEAM: controllo separato, con calcoli propri
+      const v = verify({ sig, candles: market[sym]?.[0] ?? [], now: this.now, intervalMin: cfg.interval_min, ticker: tickers[sym] ?? {},
+        amount, equity: eq, cash: Math.max(0, cash), cfg, openSymbols: Object.keys(ref.positions), recentClosed: ref.closed,
+        lab: this.labFor(sym), forecasts: this.state.forecasts })
+      sig.verifica = v
+      this.stats.verifier.checked++
+      if (v.verdict === "BLOCCA") {
+        this.stats.verifier.blocked++; this.stats.verifier.last = `${sym}: bloccato`
+        this.log("VERIFICATORE", `${sym}: BLOCCATO → ${v.summary}`, "warn")
+        this.forecast(sig, tickers[sym] ?? {}, "bloccato dal verificatore")
+        continue
+      }
+      this.stats.verifier.last = `${sym}: confermato`
+      const medie = v.redteam.filter((o) => o.level === "media").map((o) => o.text)
+      this.log("VERIFICATORE", `${sym}: CONFERMATO · ${v.summary}${medie.length ? ` · obiezioni: ${medie.join("; ")}` : ""}`)
       const verdict = await this.ai(sig, cfg)
       sig.ai = verdict
       if (verdict) {
@@ -405,6 +431,7 @@ export class Office {
       this.stats.risk.last = `${sym}: via libera`
       const riskEur = sig.ind.atr && sig.price ? (amount * cfg.stop_atr * sig.ind.atr) / sig.price : null
       this.log("RISK", `${sym}: controlli superati · importo ${eur(amount)}${riskEur !== null ? ` · perdita massima allo stop ≈ ${eur(riskEur)}` : ""} · ${why}`)
+      this.forecast(sig, tickers[sym] ?? {}, this.mode === "live" ? "proposto" : this.mode)
       if (this.mode === "shadow") { this.shadow(sig, amount, why, tickers[sym] ?? {}); continue }
       if (this.mode === "live") { this.proposeBuy(sig, amount, why, tickers[sym] ?? {}, market[sym]?.[0] ?? []); continue }
       const broker = this.mode === "live" ? liveBroker! : paperBroker
@@ -441,6 +468,30 @@ export class Office {
       return r
     }
     return null
+  }
+
+  // ------------------------------------------------------------ LABORATORIO e previsioni
+  labFor(sym: string) {
+    const r = this.opts.lab?.symbols?.find((x) => x.symbol === sym)
+    return r ? r.all : null
+  }
+  labLine(sym: string): string {
+    const lab = this.opts.lab, r = lab?.symbols?.find((x) => x.symbol === sym)
+    if (!lab || !r) return "Nessuna prova storica disponibile"
+    const a = r.all, o = r.out_of_sample
+    return `${lab.version} del ${hhmm(lab.t)}: ${a.trades} operazioni su ${r.candles} candele 4h, vincenti ${a.win_rate?.toFixed(0) ?? "—"}%, ` +
+      `media ${a.expectancy_r?.toFixed(2) ?? "—"} R · periodo recente ${o.trades} op., ${o.expectancy_r?.toFixed(2) ?? "—"} R · verdetto globale ${lab.verdict}`
+  }
+  /** Registra una previsione verificabile (una per candela e simbolo): esito valutato sulle candele successive. */
+  forecast(sig: Signal, tk: Ticker, tag: string) {
+    const fc = (this.state.forecasts = this.state.forecasts ?? [])
+    if (fc.some((p) => p.symbol === sig.symbol && p.t_signal === sig.t)) return
+    const px = num(tk.ask) || sig.price, a = sig.ind.atr
+    if (!a || !px) return
+    const lab = this.labFor(sig.symbol)
+    fc.push({ id: this.uuid(), symbol: sig.symbol, t_signal: sig.t, created: this.now, entry: px, stop: px - this.cfg.stop_atr * a, tp: px + this.cfg.tp_atr * a,
+      horizon_h: this.cfg.time_stop_hours, tag, score: sig.score, expected_win_pct: lab && lab.trades >= 5 ? lab.win_rate : null, outcome: null })
+    this.state.forecasts = fc.slice(-MAX_FORECASTS)
   }
 
   // ------------------------------------------------------------ SCOUT · controllore dati
@@ -506,7 +557,10 @@ export class Office {
           `RSI ${g6(sig.ind.rsi ?? NaN)} · ADX ${g6(sig.ind.adx ?? NaN)} · ATR ${g6(sig.ind.atr_pct ?? NaN)}%`],
         ipotesi: ["Il trend di fondo 4h resta rialzista (EMA50 sopra EMA200)", "La correzione in corso si esaurisce vicino ai livelli attuali"],
         controtesi: [`Chiusura sotto lo stop ${g6(stop)} (−${(((px - stop) / px) * 100).toFixed(1)}%)`, "EMA50 che scende sotto EMA200: trend rotto, uscita",
-          `Alla conferma il prezzo è salito oltre ${g6(px * (1 + MAX_DRIFT_PCT / 100))}: la proposta si annulla da sola`],
+          `Alla conferma il prezzo è salito oltre ${g6(px * (1 + MAX_DRIFT_PCT / 100))}: la proposta si annulla da sola`,
+          ...(sig.verifica?.redteam ?? []).map((o: any) => `Red team: ${o.text}`)],
+        verifica: (sig.verifica?.checks ?? []).map((c: any) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`),
+        prove_storiche: this.labLine(sig.symbol),
         costi: `≈ ${eur(costs)} (commissioni entrata+uscita${spread !== null ? ` + spread ${spread.toFixed(3)}%` : ""})`,
         quantita: `${eur(amount)} a mercato ≈ ${g6(amount / px)} ${sig.symbol.split("-")[0]} · stop ${g6(stop)} · target ${g6(tp)}`,
         rischio: `perdita massima allo stop ≈ ${eur(riskEur)} (senza slippage) · ${why}`,
@@ -793,11 +847,17 @@ export class Office {
       pending_orders: this.journal.items.map((o) => ({ symbol: o.symbol, side: o.side, created_ms: o.created_ms })),
       proposals: [...this.proposals].reverse().slice(0, 12),
       scout: { ...this.scoutInfo, stop: this.scoutStop },
+      verifier: { ...this.stats.verifier },
+      forecasts: { ...forecastSummary(this.state.forecasts ?? []), last: [...(this.state.forecasts ?? [])].reverse().slice(0, 12) },
+      lab: this.opts.lab ? { t: this.opts.lab.t, version: this.opts.lab.version, verdict: this.opts.lab.verdict, reasons: this.opts.lab.reasons, total: this.opts.lab.total,
+        symbols: this.opts.lab.symbols.map((x) => ({ symbol: x.symbol, all: x.all, out_of_sample: x.out_of_sample, candles: x.candles })), promotion: this.opts.lab.promotion,
+        fee_pct: this.opts.lab.fee_pct, slip_pct: this.opts.lab.slip_pct } : null,
       ai_enabled: !!this.opts.aiEnabled, telegram: !!this.opts.telegram, runs: this.state.runs ?? 0,
       config: Object.fromEntries(keys.map((k) => [k, cfg[k]])),
       agents: [
         { id: "scout", name: "Scout", role: "Controlla saldo sul broker, registro = conto, prezzi e candele freschi", status: this.scoutStop ? "STOP" : "VIGILE", metric: this.scoutInfo.candles_ok, unit: "coppie con dati freschi", detail: this.scoutStop ?? (this.scoutInfo.checked_at ? `Saldo confermato alle ${hhmm(this.scoutInfo.checked_at)}` : "Saldo non richiesto (niente LIVE)") },
         { id: "analyst", name: "Analista", role: "Scansiona il mercato su candele chiuse e propone gli ingressi", status: paused ? "IN PAUSA" : a.candidates ? "SEGNALE" : "SCANSIONE", metric: a.scanned, unit: "coppie analizzate", detail: best ? `Migliore: ${best.symbol} ${best.score}/100` : "Nessun dato", ai_reviews: a.ai },
+        { id: "verifier", name: "Verificatore", role: "Ricalcola indicatori, rischio e coerenza delle fonti con codice proprio; il red team cerca motivi di fallimento. Può bloccare", status: this.stats.verifier.blocked ? "BLOCCO" : "VIGILE", metric: this.stats.verifier.checked, unit: "proposte verificate", detail: this.stats.verifier.last || "Nessun segnale da verificare in questo turno" },
         { id: "risk", name: "Risk", role: "Limiti di perdita, esposizione, dati mancanti, veto IA", status: paused ? "IN PAUSA" : r.blocked ? "BLOCCO" : "VIGILE", metric: r.checked, unit: "controlli", detail: r.last || "Nessun candidato in questo turno" },
         { id: "trader", name: "Trader", role: "Prepara ordini e uscite; in LIVE li invia solo dopo la tua conferma", status: paused ? "IN PAUSA" : t.buys || t.sells || t.shadow ? "OPERATIVO" : "VIGILE", metric: view.positions.length, unit: "posizioni aperte", detail: `${t.proposed} proposte · ${t.buys} acquisti · ${t.sells} vendite · ${t.shadow} simulati in shadow · ${t.blocked} bloccati` },
       ],

@@ -11,10 +11,12 @@ import type { RoleId, SalaState } from "./sala-state"
 const HUMAN_URL = "https://assets.macaly-user-data.dev/yi9n8qni1n5wrdwaqp51ks67/vu9nhwmqkga5erx4wfgq55x2/eyQqA07Y-IQBBs0mOVim5/trader-human-PbjW_jnI.glb"
 const GOLD = 0xe8be5c
 const ROLES: { id: RoleId; color: number; suit: number; angle: number }[] = [
-  { id: "SCOUT", color: 0x5fd3d3, suit: 0x16272a, angle: -2.35 },
-  { id: "ANALISTA", color: 0x6fa8ff, suit: 0x1b2638, angle: -0.8 },
-  { id: "RISK", color: 0xff8a5c, suit: 0x33221f, angle: 0.8 },
-  { id: "TRADER", color: 0x45c98a, suit: 0x18291f, angle: 2.35 },
+  // cinque postazioni su sei posti: nessuna dietro l'ologramma, il posto libero è davanti a destra
+  { id: "SCOUT", color: 0x5fd3d3, suit: 0x16272a, angle: -2.6 },
+  { id: "ANALISTA", color: 0x6fa8ff, suit: 0x1b2638, angle: -1.56 },
+  { id: "VERIFICATORE", color: 0xb48cff, suit: 0x231c33, angle: -0.52 },
+  { id: "RISK", color: 0xff8a5c, suit: 0x33221f, angle: 0.52 },
+  { id: "TRADER", color: 0x45c98a, suit: 0x18291f, angle: 1.56 },
 ]
 const css = (c: number) => `#${c.toString(16).padStart(6, "0")}`
 const fmt = (n: unknown, d = 0) => {
@@ -147,6 +149,22 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
       g.font = "400 16px IBM Plex Mono, monospace"; g.fillStyle = "#e46a6a"; g.fillText(`stop ${fmt(p.stop)}`, x0, y + 38)
       g.fillStyle = "#45c98a"; const tl = `target ${fmt(p.tp)}`; g.fillText(tl, x1 - g.measureText(tl).width, y + 38)
       roleLine(g, S, "TRADER", H - 14)
+    },
+    VERIFICATORE: (g, W, H, S, d) => {
+      frame(g, W, H, "VERIFICATORE · red team", "#b48cff"); if (!S.connected) return offline(g, W, H, S)
+      const v = d?.verifier ?? {}, lab = d?.lab, fc = d?.forecasts
+      const rows: [string, string, boolean | null][] = [
+        ["verificate", String(v.checked ?? 0), null],
+        ["bloccate", String(v.blocked ?? 0), v.checked ? !(v.blocked > 0) : null],
+        ["prove storiche", lab ? String(lab.verdict) : "assenti", lab ? lab.verdict === "SUPERATO" : null],
+        ["previsioni ok", fc?.evaluated ? `${Math.round(fc.target_first_pct ?? 0)}% di ${fc.evaluated}` : "—", null],
+      ]
+      rows.forEach(([lab2, val, ok], i) => {
+        const y = 78 + i * 34
+        g.fillStyle = "#9aa3b5"; g.font = "400 18px IBM Plex Mono, monospace"; g.fillText(lab2, 18, y)
+        g.fillStyle = ok === null ? "#ece6d6" : ok ? "#45c98a" : "#e46a6a"; g.font = "600 18px IBM Plex Mono, monospace"; g.fillText(val, 200, y)
+      })
+      roleLine(g, S, "VERIFICATORE", H - 14)
     },
     SCOUT: (g, W, H, S, d) => {
       frame(g, W, H, "SCOUT · dati e conto", "#5fd3d3"); if (!S.connected) return offline(g, W, H, S)
@@ -299,7 +317,7 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
   }
   /** Racconta il turno appena arrivato, nell'ordine reale del lavoro, solo con i ruoli che hanno scritto qualcosa. */
   function playTurn(S: SalaState) {
-    const order = (["SCOUT", "ANALISTA", "RISK", "TRADER"] as RoleId[]).filter((id) => S.roles[id].turnEntries.length)
+    const order = (["SCOUT", "ANALISTA", "VERIFICATORE", "RISK", "TRADER"] as RoleId[]).filter((id) => S.roles[id].turnEntries.length)
     let prev: Person | null = null
     order.forEach((id, i) => {
       const p = byId[id]
@@ -314,6 +332,7 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
           later(4200, () => p.target.copy(p.st.seat))
         }
         if (id === "SCOUT") gesture(p, S.events.scoutStop ? "shake" : "agree")
+        if (id === "VERIFICATORE") { if (S.events.verifierBlock) gesture(p, "shake"); else if (S.events.verifierOk) gesture(p, "agree") }
         if (id === "TRADER" && S.events.proposal && !S.events.trade && !S.events.sold) gesture(p, "agree")
         prev = p
       })
@@ -402,7 +421,8 @@ export function mountSala(canvas: HTMLCanvasElement, tagsEl: HTMLElement, getDat
       ;(p.st.pad.material as THREE.MeshBasicMaterial).opacity = S.connected ? 0.15 + base * 0.6 : 0.06
       const hp = headPos(p).project(camera)
       p.tag.style.display = hp.z < 1 ? "" : "none"
-      p.tag.style.left = `${(hp.x * 0.5 + 0.5) * rect.width}px`; p.tag.style.top = `${(-hp.y * 0.5 + 0.5) * rect.height}px`
+      const half = (p.tag.offsetWidth || 120) / 2 + 4 // il cartellino resta dentro lo schermo
+      p.tag.style.left = `${Math.min(rect.width - half, Math.max(half, (hp.x * 0.5 + 0.5) * rect.width))}px`; p.tag.style.top = `${(-hp.y * 0.5 + 0.5) * rect.height}px`
       p.tag.dataset.status = role.status
       ;(p.tag.firstChild as HTMLElement).textContent = `${ROLE_INFO[p.st.id].title} · ${role.status}`
       ;(p.tag.lastChild as HTMLElement).textContent = now < p.sayUntil ? p.say : ""

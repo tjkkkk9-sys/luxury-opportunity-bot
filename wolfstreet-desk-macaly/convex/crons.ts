@@ -7,6 +7,9 @@ const crons = cronJobs()
 // Senza chiavi Revolut X il turno si ferma subito senza fare nulla.
 crons.interval("turno ufficio", { minutes: 30 }, internal.desk.runTurn, {})
 
+// Laboratorio: ogni giorno rifà le prove storiche con le regole attuali (sola lettura, nessun ordine).
+crons.daily("laboratorio prove storiche", { hourUTC: 3, minuteUTC: 9 }, internal.desk.runLab, {})
+
 // Analista Plus500 ogni 30 minuti: solo segnali e avvisi Telegram, nessun ordine (Plus500 non ha API).
 // In pausa su richiesta del titolare (conto Plus500 senza fondi): si riattiva togliendo il commento.
 // crons.interval("analista plus500", { minutes: 30 }, internal.desk.runPlus500, {})

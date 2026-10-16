@@ -6,7 +6,10 @@ import { createCipheriv, createDecipheriv, createPrivateKey, hkdfSync, randomByt
 import { internal } from "./_generated/api"
 import { action, internalAction } from "./_generated/server"
 import type { ActionCtx } from "./_generated/server"
-import { esc, Office, selftest as runSelftest } from "./lib/office"
+import { esc, Office, selftest as runSelftest, STRATEGY_VERSION, toDash } from "./lib/office"
+import { labReport } from "./lib/backtest"
+import * as safety from "./lib/safety"
+import * as st from "./lib/strategy"
 import type { AiReview, Proposal } from "./lib/office"
 import { keyFingerprint, normalizePem, RevolutX } from "./lib/revolutx"
 import { analyzeCfd, byId, clampP500, followIdea, parseYahoo } from "./lib/plus500"
@@ -150,8 +153,9 @@ export const runTurn = internalAction({
       const persist = async () => {
         await ctx.runMutation(internal.store.saveTurn, { state: JSON.stringify(state), control: JSON.stringify(control), base })
       }
+      const lab = await ctx.runQuery(internal.store.readLab, {})
       const office = new Office(client, config, control, state, now, {
-        persist, ai: makeAi(anthropicKey, config.ai_review !== false), uuid: randomUUID,
+        persist, ai: makeAi(anthropicKey, config.ai_review !== false), uuid: randomUUID, lab,
         aiEnabled: !!anthropicKey && config.ai_review !== false, telegram: !!(await getSecret(ctx, "telegram_token")),
       })
       let snap: any
@@ -178,6 +182,34 @@ export const runTurn = internalAction({
       await ctx.runMutation(internal.store.lock, { now, release: true })
     }
   },
+})
+
+// ------------------------------------------------------------- LABORATORIO: prove storiche ripetibili (sola lettura)
+/** Scarica lo storico 4h da Revolut X e rifà le prove con le regole attuali. Nessun ordine, nessuna modifica alle regole. */
+export const runLab = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const now = Math.floor(Date.now() / 1000)
+    const { config } = await ctx.runQuery(internal.store.readAll, {})
+    const [cfg] = safety.clampConfig(config)
+    const client = await buildClient(ctx)
+    const data: Record<string, st.Candle[]> = {}
+    for (const sym of cfg.pairs.map(toDash)) data[sym] = st.closedOnly(st.normalize(await client.candles(sym, cfg.interval_min, 1500)), cfg.interval_min, now)
+    const strat = `${STRATEGY_VERSION} · soglia ${cfg.min_score} · stop ${cfg.stop_atr} ATR · target ${cfg.tp_atr} ATR`
+    const report = labReport(data, cfg, now, strat)
+    const prev: any = await ctx.runQuery(internal.store.readLab, {})
+    await ctx.runMutation(internal.store.saveLab, { lab: JSON.stringify(report) })
+    if (!prev || prev.verdict !== report.verdict || prev.strategy !== report.strategy) {
+      const T = report.total
+      await telegram(ctx, `🧪 <b>Laboratorio · ${esc(report.verdict)}</b>\n${esc(strat)}\n${T.all.trades} operazioni simulate su ${Object.values(data)[0]?.length ?? 0} candele 4h per coppia (commissioni e slippage inclusi)\n` +
+        `Media ${T.all.expectancy_r?.toFixed(2) ?? "—"} R · periodo recente ${T.out_of_sample.expectancy_r?.toFixed(2) ?? "—"} R\n${report.reasons.map((r) => "• " + esc(r)).join("\n")}`)
+    }
+    return { verdict: report.verdict, trades: report.total.all.trades }
+  },
+})
+export const labNow = action({
+  args: {},
+  handler: async (ctx): Promise<any> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.runLab, {}) },
 })
 
 // ------------------------------------------------------------- conferma del titolare e allineamento

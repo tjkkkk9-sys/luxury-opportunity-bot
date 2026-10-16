@@ -41,7 +41,7 @@ describe("salaState", () => {
     expect(S.roles.RISK.status).toBe("in attesa") // la sua voce è del turno prima
     expect(S.roles.RISK.last?.text).toMatch(/bloccato/)
     expect(S.roles.SCOUT.status).toBe("attivo")
-    expect(Object.keys(S.roles)).toEqual(["SCOUT", "ANALISTA", "RISK", "TRADER"]) // Sistema non è un robot
+    expect(Object.keys(S.roles)).toEqual(["SCOUT", "ANALISTA", "VERIFICATORE", "RISK", "TRADER"]) // Sistema non è un robot
     expect(S.system.entries[0].text).toBe("turno completato")
     const E = salaState(base({ log: [{ t: T, bot: "SCOUT", text: "Registro e conto non coincidono", level: "error" }, { t: T, bot: "SISTEMA", text: "Turno interrotto", level: "error" }] }), T + 60)
     expect(E.roles.SCOUT.status).toBe("errore")
