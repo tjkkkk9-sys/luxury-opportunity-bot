@@ -203,7 +203,9 @@ class LiveBroker implements Broker {
   }
 }
 
-export type OfficeOpts = { persist?: () => Promise<void>; ai?: AiReview; uuid?: () => string; aiEnabled?: boolean; telegram?: boolean; lab?: LabReport | null }
+export type OfficeOpts = { persist?: () => Promise<void>; ai?: AiReview; uuid?: () => string; aiEnabled?: boolean; telegram?: boolean; lab?: LabReport | null
+  /** Varianti seguite "in avanti": solo previsioni sui dati nuovi, nessun ordine e nessuna proposta. */
+  track?: { id: string; name: string; cfg: Record<string, any>; win?: Record<string, number | null> }[] }
 const MAX_FORECASTS = 300
 
 export class Office {
@@ -377,6 +379,23 @@ export class Office {
     if (top && top.action !== "COMPRA") this.log("ANALISTA", `Scansionate ${signals.length} coppie. Migliore ${top.symbol} ${top.score}/100: nessun ingresso.`)
     if (!signals.length) this.log("ANALISTA", "Nessuna coppia analizzabile in questo turno: nessun acquisto.", "warn")
 
+    // VARIANTI IN AVANTI: stesse candele vere, regole della variante, solo previsioni (mai ordini o proposte)
+    for (const tv of this.opts.track ?? []) {
+      let vcfg: Cfg
+      try { [vcfg] = safety.clampConfig({ ...cfg, ...tv.cfg }) } catch { continue }
+      for (const sym of (vcfg.pairs as string[]).map(toDash)) {
+        const m = market[sym], tk = tickers[sym] ?? {}
+        if (!m || m[0].length < MIN_CANDLES || this.scoutInfo.stale.includes(sym)) continue
+        const b = num(tk.bid), a = num(tk.ask)
+        const spread = a > 0 && b > 0 ? ((a - b) / ((a + b) / 2)) * 100 : null
+        const vs = st.analyze(sym, m[0], vcfg, m[1], undefined, spread)
+        if (vs.action !== "COMPRA") continue
+        const tag = `variante ${tv.id} (in avanti)`
+        if (this.forecast(vs, tk, tag, vcfg, tv.win?.[sym] ?? null))
+          this.log("VERIFICATORE", `Variante ${tv.id} «${tv.name}» in avanti: ${sym} ${vs.score}/100 → previsione registrata (nessun ordine)`)
+      }
+    }
+
     // RISK + TRADER
     const book = this.book
     const ref = book ?? emptyBook(cfg.budget_eur)
@@ -483,15 +502,17 @@ export class Office {
       `media ${a.expectancy_r?.toFixed(2) ?? "—"} R · periodo recente ${o.trades} op., ${o.expectancy_r?.toFixed(2) ?? "—"} R · verdetto globale ${lab.verdict}`
   }
   /** Registra una previsione verificabile (una per candela e simbolo): esito valutato sulle candele successive. */
-  forecast(sig: Signal, tk: Ticker, tag: string) {
+  forecast(sig: Signal, tk: Ticker, tag: string, cfg: Cfg = this.cfg, expected?: number | null): boolean {
     const fc = (this.state.forecasts = this.state.forecasts ?? [])
-    if (fc.some((p) => p.symbol === sig.symbol && p.t_signal === sig.t)) return
+    if (fc.some((p) => p.symbol === sig.symbol && p.t_signal === sig.t && p.tag === tag)) return false
     const px = num(tk.ask) || sig.price, a = sig.ind.atr
-    if (!a || !px) return
+    if (!a || !px) return false
     const lab = this.labFor(sig.symbol)
-    fc.push({ id: this.uuid(), symbol: sig.symbol, t_signal: sig.t, created: this.now, entry: px, stop: px - this.cfg.stop_atr * a, tp: px + this.cfg.tp_atr * a,
-      horizon_h: this.cfg.time_stop_hours, tag, score: sig.score, expected_win_pct: lab && lab.trades >= 5 ? lab.win_rate : null, outcome: null })
+    fc.push({ id: this.uuid(), symbol: sig.symbol, t_signal: sig.t, created: this.now, entry: px, stop: px - cfg.stop_atr * a, tp: px + cfg.tp_atr * a,
+      horizon_h: cfg.time_stop_hours, tag, score: sig.score,
+      expected_win_pct: expected !== undefined ? expected : lab && lab.trades >= 5 ? lab.win_rate : null, outcome: null })
     this.state.forecasts = fc.slice(-MAX_FORECASTS)
+    return true
   }
 
   // ------------------------------------------------------------ SCOUT · controllore dati

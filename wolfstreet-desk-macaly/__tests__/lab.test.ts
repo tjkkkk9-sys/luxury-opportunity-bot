@@ -181,6 +181,22 @@ describe("Ufficio con Verificatore", () => {
     expect(state.forecasts.length).toBeGreaterThan(0)
     expect(snap.forecasts.evaluated).toBeGreaterThan(0)
   })
+  it("variante seguita in avanti: solo previsioni con la sua etichetta, mai ordini né posizioni", async () => {
+    const { VARIANTS } = await import("../convex/lib/backtest")
+    const A = VARIANTS.find((v) => v.id === "A")!
+    const fake = new Fake(); const state: any = {}
+    for (const t of DATA["BTC-EUR"].map((c) => c.t).slice(300).filter((_, i) => i % 2 === 0)) {
+      fake.now = t + 1
+      await new Office(fake as any, CFG, { mode: "shadow" }, state, t + 1, { uuid: () => Math.random().toString(36).slice(2), track: [{ id: "A", name: A.name, cfg: A.cfg }] }).run()
+    }
+    const mine = state.forecasts.filter((f: any) => f.tag === "variante A (in avanti)")
+    expect(mine.length).toBeGreaterThan(0)
+    expect(mine.every((f: any) => ["BTC-EUR", "ETH-EUR"].includes(f.symbol))).toBe(true)
+    expect(new Set(mine.map((f: any) => f.symbol + f.t_signal)).size).toBe(mine.length) // una per candela
+    expect(fake.orders).toHaveLength(0)
+    expect(state.proposals ?? []).toHaveLength(0)
+    expect(state.books?.paper?.closed ?? []).toHaveLength(0)
+  })
   it("fonti in conflitto (prezzo live 10% sopra le candele): il Verificatore blocca ogni ingresso", async () => {
     const { state, fake } = await run(1.1)
     expect(Object.keys(state.books.paper.positions)).toHaveLength(0)

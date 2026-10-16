@@ -97,6 +97,19 @@ export const rollbackStrategy = internalMutation({
     return { ok: true, text: `Strategia riportata a com'era prima di: ${prev.replaced_by}` }
   },
 })
+export const readTracking = internalQuery({
+  args: {},
+  handler: async (ctx) => ({ tracking: parse(await getKV(ctx, "tracking"), []) as string[], variants: parse(await getKV(ctx, "lab_variants"), null) }),
+})
+export const setTracking = internalMutation({
+  args: { id: v.string(), on: v.boolean() },
+  handler: async (ctx, { id, on }) => {
+    const cur: string[] = parse(await getKV(ctx, "tracking"), [])
+    const next = on ? [...new Set([...cur, id])] : cur.filter((x) => x !== id)
+    await putKV(ctx, "tracking", JSON.stringify(next))
+    return next
+  },
+})
 export const readLab = internalQuery({ args: {}, handler: async (ctx) => parse(await getKV(ctx, "lab"), null) })
 export const saveLab = internalMutation({ args: { lab: v.string() }, handler: async (ctx, { lab }) => { await putKV(ctx, "lab", lab) } })
 
@@ -157,6 +170,7 @@ export const view = query({
       keys,
       keyFingerprint: (await getKV(ctx, "key_fingerprint")) ?? null,
       variants: parse(await getKV(ctx, "lab_variants"), null),
+      tracking: parse(await getKV(ctx, "tracking"), []),
       configPrev: parse(await getKV(ctx, "config_prev"), null),
       strategyNote: parse(await getKV(ctx, "config"), {})?.strategy_note ?? null,
     }

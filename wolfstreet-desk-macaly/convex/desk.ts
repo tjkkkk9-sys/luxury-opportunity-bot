@@ -154,8 +154,14 @@ export const runTurn = internalAction({
         await ctx.runMutation(internal.store.saveTurn, { state: JSON.stringify(state), control: JSON.stringify(control), base })
       }
       const lab = await ctx.runQuery(internal.store.readLab, {})
+      const { tracking, variants } = await ctx.runQuery(internal.store.readTracking, {})
+      const track = VARIANTS.filter((x) => tracking.includes(x.id)).map((x) => {
+        const res = variants?.variants?.find((r: any) => r.id === x.id)
+        const win = Object.fromEntries((res?.symbols ?? []).map((s: any) => [s.symbol, s.all?.trades >= 5 ? s.all.win_rate : null]))
+        return { id: x.id, name: x.name, cfg: x.cfg, win }
+      })
       const office = new Office(client, config, control, state, now, {
-        persist, ai: makeAi(anthropicKey, config.ai_review !== false), uuid: randomUUID, lab,
+        persist, ai: makeAi(anthropicKey, config.ai_review !== false), uuid: randomUUID, lab, track,
         aiEnabled: !!anthropicKey && config.ai_review !== false, telegram: !!(await getSecret(ctx, "telegram_token")),
       })
       let snap: any
@@ -275,6 +281,23 @@ export const rollbackStrategy = action({
   },
 })
 void VARIANT_KEYS
+/** Segue (o smette di seguire) una variante in avanti: solo previsioni, nessun ordine. */
+export const trackInternal = internalAction({
+  args: { id: v.string(), on: v.boolean() },
+  handler: async (ctx, { id, on }): Promise<{ ok: boolean; text: string }> => {
+    const vr = VARIANTS.find((x) => x.id === id)
+    if (!vr) return { ok: false, text: "Variante sconosciuta" }
+    await ctx.runMutation(internal.store.setTracking, { id, on })
+    const text = on ? `Variante ${id} (${vr.name}) seguita in avanti: a ogni turno registra le sue previsioni sui dati nuovi, senza ordini né proposte.`
+      : `Variante ${id} non più seguita. Le previsioni già registrate restano.`
+    await telegram(ctx, `🔭 ${esc(text)}`)
+    return { ok: true, text }
+  },
+})
+export const trackVariant = action({
+  args: { id: v.string(), on: v.boolean() },
+  handler: async (ctx, a): Promise<{ ok: boolean; text: string }> => { await requireOwner(ctx); return await ctx.runAction(internal.desk.trackInternal, a) },
+})
 
 export const labNow = action({
   args: { what_if_min_score: v.optional(v.number()) },

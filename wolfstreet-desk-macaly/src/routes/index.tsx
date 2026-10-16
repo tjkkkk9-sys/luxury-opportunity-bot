@@ -714,6 +714,8 @@ function Lab({ D, data }: { D: any; data: any }) {
   const runV = useAction(api.desk.variantsNow)
   const promote = useAction(api.desk.promoteVariant)
   const rollback = useAction(api.desk.rollbackStrategy)
+  const track = useAction(api.desk.trackVariant)
+  const tracked: string[] = data?.tracking ?? []
   const [vmsg, setVmsg] = useState("")
   const [askP, setAskP] = useState("")
   const V = data?.variants
@@ -773,6 +775,9 @@ function Lab({ D, data }: { D: any; data: any }) {
               <div className="tw"><table><thead><tr><th>Strumento</th><th>Op.</th><th>Vinte</th><th>R medio</th><th>Profit f.</th><th>Calo R</th><th>Recente: op. · R</th></tr></thead>
                 <tbody>{x.symbols.map((y: any) => row(y.symbol, y.all, y.recent))}{row("Totale", x.total.all, x.total.out_of_sample)}</tbody></table></div>
               {x.reasons?.length > 0 && <ul className="lab-why">{x.reasons.map((r: string) => <li key={r}>{r}</li>)}</ul>}
+              <div className="row"><button className="ghost" onClick={() => void vdo(() => track({ id: x.id, on: !tracked.includes(x.id) }), "Salvo…")}>
+                {tracked.includes(x.id) ? "Smetti di seguire in avanti" : "Segui in avanti (solo previsioni)"}</button>
+                {tracked.includes(x.id) && <span className="chip c-ai">seguita in avanti</span>}</div>
               {x.verdict === "SUPERATO" && (askP === x.id
                 ? <div className="row"><button className="solid" onClick={() => void vdo(() => promote({ id: x.id }), "Riscarico lo storico e riprovo prima di attivare…")}>Sì, attiva {x.id}</button><button className="ghost" onClick={() => setAskP("")}>Annulla</button></div>
                 : <button className="solid" onClick={() => setAskP(x.id)}>Attiva questa variante</button>)}
